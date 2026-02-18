@@ -6,14 +6,19 @@ import {
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
-import { Send, Camera, CheckCircle, X, Leaf, Sparkles } from 'lucide-react-native';
+import { Send, Camera, CheckCircle, X, Video } from 'lucide-react-native';
+import { createClient } from '@supabase/supabase-js';
 import { useApp } from '@/providers/AppProvider';
 import { INSPIRING_IMAGES_FOR_PUBLISH } from '@/mocks/publications';
+
+const SUPABASE_URL = 'https://bfhtygvwmntcrdjyhdvb.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_j4gif7kSrdaxyPOhW0qsuQ_0EnBNwqU';
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 export default function PublishScreen() {
   const { addPublication, colors, t, textScale } = useApp();
   const [text, setText] = useState('');
-  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [media, setMedia] = useState<{ uri: string; type: 'image' | 'video' } | null>(null);
   const [showConfirmation, setShowConfirmation] = useState(false);
   const confirmFade = useRef(new Animated.Value(0)).current;
   const confirmScale = useRef(new Animated.Value(0.9)).current;
@@ -28,82 +33,85 @@ export default function PublishScreen() {
       confirmFade.setValue(0);
       confirmScale.setValue(0.9);
     }
-  }, [showConfirmation, confirmFade, confirmScale]);
+  }, [showConfirmation]);
 
-  const handlePickImage = useCallback(async () => {
-    try {
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'],
-        allowsEditing: true,
-        aspect: [4, 3],
-        quality: 0.8,
+  const pickMedia = useCallback(async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.All,
+      quality: 0.8,
+    });
+
+    if (!result.canceled && result.assets[0]) {
+      const asset = result.assets[0];
+      setMedia({
+        uri: asset.uri,
+        type: asset.type === 'video' ? 'video' : 'image',
       });
-      if (!result.canceled && result.assets[0]) {
-        setSelectedImage(result.assets[0].uri);
-      }
-    } catch (error) {
-      console.log('MAB: Image picker error:', error);
-      Alert.alert(t.error, "Impossible de sélectionner l'image.");
     }
-  }, [t]);
-
-  const handleSelectPreset = useCallback((url: string) => {
-    setSelectedImage(prev => prev === url ? null : url);
   }, []);
 
-  const handleRemoveImage = useCallback(() => {
-    setSelectedImage(null);
-  }, []);
+  const uploadToSupabase = async (uri: string) => {
+    const res = await fetch(uri);
+    const blob = await res.blob();
+    const ext = uri.split('.').pop();
+    const fileName = `${Date.now()}.${ext}`;
 
-  const handleSubmit = useCallback(() => {
-    if (!text.trim() && !selectedImage) {
+    const { error } = await supabase.storage
+      .from('media')
+      .upload(fileName, blob, { contentType: blob.type });
+
+    if (error) throw error;
+
+    const { data } = supabase.storage.from('media').getPublicUrl(fileName);
+    return data.publicUrl;
+  };
+
+  const handleSubmit = useCallback(async () => {
+    if (!text.trim() && !media) {
       Alert.alert(t.contentRequired, t.contentRequiredMsg);
       return;
     }
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    addPublication(text.trim(), selectedImage || undefined);
-    setText('');
-    setSelectedImage(null);
-    setShowConfirmation(true);
-    console.log('MAB: Publication submitted for review');
-  }, [text, selectedImage, addPublication, t]);
 
-  const handlePublishAgain = useCallback(() => {
-    setShowConfirmation(false);
-  }, []);
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
-  const canSubmit = !!(text.trim() || selectedImage);
+      let mediaUrl: string | undefined;
+
+      if (media) {
+        mediaUrl = await uploadToSupabase(media.uri);
+      }
+
+      addPublication(text.trim(), mediaUrl);
+
+      setText('');
+      setMedia(null);
+      setShowConfirmation(true);
+    } catch (e) {
+      console.log(e);
+      Alert.alert('Erreur', "Upload impossible");
+    }
+  }, [text, media]);
+
+  const canSubmit = !!(text.trim() || media);
 
   if (showConfirmation) {
     return (
       <View style={[styles.confirmContainer, { backgroundColor: colors.background }]}>
-        <View style={styles.confirmLeafDecor} pointerEvents="none">
-          <Leaf size={100} color={colors.primary} />
-        </View>
-        <View style={styles.confirmSparkle} pointerEvents="none">
-          <Sparkles size={40} color={colors.accent} />
-        </View>
         <Animated.View style={[styles.confirmCard, {
           backgroundColor: colors.surface,
           borderColor: colors.border,
           opacity: confirmFade,
           transform: [{ scale: confirmScale }],
         }]}>
-          <View style={styles.confirmIconWrap}>
-            <CheckCircle size={56} color={colors.success} />
-          </View>
-          <Text style={[styles.confirmTitle, { color: colors.text, fontSize: 22 * textScale }]}>
+          <CheckCircle size={56} color={colors.success} />
+          <Text style={[styles.confirmTitle, { color: colors.text }]}>
             {t.publicationSent}
-          </Text>
-          <Text style={[styles.confirmMessage, { color: colors.textSecondary, fontSize: 14 * textScale }]}>
-            {t.publicationSentMsg}
           </Text>
           <Pressable
             style={[styles.againButton, { backgroundColor: colors.primary }]}
-            onPress={handlePublishAgain}
-            testID="publish-again"
+            onPress={() => setShowConfirmation(false)}
           >
-            <Text style={[styles.againButtonText, { color: colors.background }]}>{t.publishAgain}</Text>
+            <Text style={{ color: colors.background }}>{t.publishAgain}</Text>
           </Pressable>
         </Animated.View>
       </View>
@@ -111,283 +119,94 @@ export default function PublishScreen() {
   }
 
   return (
-    <KeyboardAvoidingView
-      style={[styles.container, { backgroundColor: colors.background }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={100}
-    >
-      <ScrollView
-        style={styles.scroll}
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scrollContent}
-      >
-        <Text style={[styles.heading, { color: colors.text, fontSize: 24 * textScale }]}>
+    <KeyboardAvoidingView style={[styles.container, { backgroundColor: colors.background }]}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <ScrollView contentContainerStyle={styles.scrollContent}>
+        <Text style={[styles.heading, { color: colors.text }]}>
           {t.shareHappiness}
         </Text>
-        <Text style={[styles.subheading, { color: colors.textSecondary, fontSize: 13 * textScale }]}>
-          {t.verifiedByMod}
-        </Text>
 
-        {!selectedImage ? (
-          <Pressable
-            style={[styles.photoArea, { backgroundColor: colors.surfaceLight, borderColor: colors.border }]}
-            onPress={handlePickImage}
-            testID="photo-area"
-          >
-            <View style={[styles.photoIconCircle, { backgroundColor: colors.primaryLight }]}>
-              <Camera size={28} color={colors.primary} />
-            </View>
-            <Text style={[styles.photoAreaTitle, { color: colors.primary }]}>{t.addPhoto}</Text>
-            <Text style={[styles.photoAreaHint, { color: colors.textMuted }]}>{t.selectFromGallery}</Text>
+        {!media ? (
+          <Pressable style={[styles.photoArea, { borderColor: colors.border }]} onPress={pickMedia}>
+            <Camera size={28} color={colors.primary} />
+            <Text style={{ color: colors.primary }}>{t.addPhoto} / Vidéo</Text>
           </Pressable>
         ) : (
-          <View style={[styles.previewWrap, { borderColor: colors.border }]}>
-            <Image
-              source={{ uri: selectedImage }}
-              style={styles.previewImage}
-              contentFit="cover"
-              transition={200}
-            />
-            <Pressable style={styles.removeBtn} onPress={handleRemoveImage}>
-              <X size={18} color={colors.white} />
+          <View style={styles.previewWrap}>
+            {media.type === 'image' ? (
+              <Image source={{ uri: media.uri }} style={styles.previewImage} />
+            ) : (
+              <View style={styles.videoPreview}>
+                <Video size={32} color="white" />
+                <Text style={{ color: 'white' }}>Vidéo sélectionnée</Text>
+              </View>
+            )}
+            <Pressable style={styles.removeBtn} onPress={() => setMedia(null)}>
+              <X size={18} color="white" />
             </Pressable>
           </View>
         )}
 
-        <Text style={[styles.presetLabel, { color: colors.textSecondary }]}>{t.inspiringImages}</Text>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.presetList}
-        >
-          {INSPIRING_IMAGES_FOR_PUBLISH.map((img) => (
-            <Pressable
-              key={img.id}
-              style={[
-                styles.presetItem,
-                { borderColor: selectedImage === img.url ? colors.primary : colors.border },
-              ]}
-              onPress={() => handleSelectPreset(img.url)}
-            >
-              <Image
-                source={{ uri: img.url }}
-                style={styles.presetImage}
-                contentFit="cover"
-              />
-              <Text style={[styles.presetItemLabel, { color: colors.textSecondary }]}>{img.label}</Text>
-            </Pressable>
-          ))}
-        </ScrollView>
-
-        <Text style={[styles.inputLabel, { color: colors.text, fontSize: 15 * textScale }]}>
-          {t.yourMessage} {selectedImage ? t.optional : ''}
-        </Text>
-        <View style={[styles.inputWrap, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-          <TextInput
-            style={[styles.textInput, { color: colors.text, fontSize: 15 * textScale }]}
-            placeholder={t.writeMessage}
-            placeholderTextColor={colors.textMuted}
-            value={text}
-            onChangeText={setText}
-            multiline
-            numberOfLines={4}
-            textAlignVertical="top"
-            maxLength={500}
-            testID="publish-text-input"
-          />
-          <Text style={[styles.charCount, { color: colors.textMuted }]}>{text.length}/500</Text>
-        </View>
+        <TextInput
+          style={[styles.textInput, { color: colors.text }]}
+          placeholder={t.writeMessage}
+          placeholderTextColor={colors.textMuted}
+          value={text}
+          onChangeText={setText}
+          multiline
+        />
 
         <Pressable
           style={[styles.submitBtn, { backgroundColor: colors.primary }, !canSubmit && styles.submitBtnDisabled]}
           onPress={handleSubmit}
           disabled={!canSubmit}
-          testID="submit-publication"
         >
           <Send size={18} color={colors.background} />
-          <Text style={[styles.submitBtnText, { color: colors.background }]}>{t.publishBtn}</Text>
+          <Text style={{ color: colors.background }}>{t.publishBtn}</Text>
         </Pressable>
-
-        <View style={styles.bottomSpacer} />
       </ScrollView>
     </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  scroll: {
-    flex: 1,
-  },
-  scrollContent: {
-    padding: 20,
-  },
-  heading: {
-    fontWeight: '700' as const,
-    marginBottom: 4,
-  },
-  subheading: {
-    marginBottom: 24,
-    lineHeight: 18,
-  },
+  container: { flex: 1 },
+  scrollContent: { padding: 20 },
+  heading: { fontSize: 22, fontWeight: '700', marginBottom: 20 },
   photoArea: {
-    borderRadius: 20,
-    borderWidth: 1.5,
+    borderWidth: 2,
     borderStyle: 'dashed',
-    paddingVertical: 36,
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  photoIconCircle: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  photoAreaTitle: {
-    fontSize: 16,
-    fontWeight: '600' as const,
-    marginBottom: 4,
-  },
-  photoAreaHint: {
-    fontSize: 13,
-  },
-  previewWrap: {
-    marginBottom: 20,
     borderRadius: 20,
-    overflow: 'hidden',
-    borderWidth: 1,
+    padding: 40,
+    alignItems: 'center',
+    marginBottom: 20,
   },
-  previewImage: {
-    width: '100%',
+  previewWrap: { borderRadius: 20, overflow: 'hidden', marginBottom: 20 },
+  previewImage: { width: '100%', height: 220 },
+  videoPreview: {
     height: 220,
-    borderRadius: 20,
+    backgroundColor: 'black',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   removeBtn: {
-    position: 'absolute',
-    top: 12,
-    right: 12,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.15)',
-  },
-  presetLabel: {
-    fontSize: 13,
-    marginBottom: 12,
-  },
-  presetList: {
-    paddingBottom: 4,
-  },
-  presetItem: {
-    marginRight: 10,
-    borderRadius: 14,
-    overflow: 'hidden',
-    borderWidth: 2,
-  },
-  presetImage: {
-    width: 90,
-    height: 70,
-    borderRadius: 12,
-  },
-  presetItemLabel: {
-    fontSize: 11,
-    textAlign: 'center',
-    marginTop: 4,
-    marginBottom: 4,
-  },
-  inputLabel: {
-    fontWeight: '600' as const,
-    marginTop: 24,
-    marginBottom: 10,
-  },
-  inputWrap: {
-    borderRadius: 16,
-    borderWidth: 1,
-    padding: 14,
-    marginBottom: 8,
+    position: 'absolute', top: 10, right: 10,
+    backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 20, padding: 6,
   },
   textInput: {
-    minHeight: 100,
-    lineHeight: 22,
-  },
-  charCount: {
-    fontSize: 12,
-    textAlign: 'right',
-    marginTop: 8,
-  },
-  submitBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 16,
-    borderRadius: 16,
-    marginTop: 24,
-  },
-  submitBtnDisabled: {
-    opacity: 0.4,
-  },
-  submitBtnText: {
-    fontSize: 16,
-    fontWeight: '700' as const,
-  },
-  confirmContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 32,
-  },
-  confirmLeafDecor: {
-    position: 'absolute',
-    right: 20,
-    top: 120,
-    opacity: 0.05,
-    transform: [{ rotate: '30deg' }],
-  },
-  confirmSparkle: {
-    position: 'absolute',
-    left: 30,
-    top: 200,
-    opacity: 0.04,
-  },
-  confirmCard: {
-    borderRadius: 24,
-    padding: 32,
-    alignItems: 'center',
+    minHeight: 120,
     borderWidth: 1,
-    width: '100%',
-  },
-  confirmIconWrap: {
+    borderRadius: 14,
+    padding: 12,
     marginBottom: 20,
   },
-  confirmTitle: {
-    fontWeight: '700' as const,
-    marginBottom: 12,
+  submitBtn: {
+    flexDirection: 'row', justifyContent: 'center', alignItems: 'center',
+    gap: 8, padding: 16, borderRadius: 16,
   },
-  confirmMessage: {
-    textAlign: 'center',
-    lineHeight: 20,
-    marginBottom: 28,
-  },
-  againButton: {
-    paddingVertical: 14,
-    paddingHorizontal: 32,
-    borderRadius: 14,
-  },
-  againButtonText: {
-    fontSize: 15,
-    fontWeight: '600' as const,
-  },
-  bottomSpacer: {
-    height: 40,
-  },
+  submitBtnDisabled: { opacity: 0.4 },
+  confirmContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  confirmCard: { padding: 32, borderRadius: 24, borderWidth: 1, alignItems: 'center' },
+  confirmTitle: { fontSize: 18, fontWeight: '700', marginVertical: 16 },
+  againButton: { padding: 14, borderRadius: 12 },
 });
