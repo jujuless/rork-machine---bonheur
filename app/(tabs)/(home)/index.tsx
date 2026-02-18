@@ -1,32 +1,34 @@
+import React, { useCallback, useRef, useEffect, useState } from 'react'
+import { View, FlatList, Text, StyleSheet, RefreshControl, Platform, Image, Animated } from 'react-native'
+import { useRouter } from 'expo-router'
+import { Smile, Leaf, Sparkles } from 'lucide-react-native'
+import { LinearGradient } from 'expo-linear-gradient'
+import { useApp } from '@/providers/AppProvider'
+import { PublicationCard } from '@/components/PublicationCard'
+import { EmptyState } from '@/components/EmptyState'
+import { Publication } from '@/types'
 import { supabase } from '@/lib/supabase'
-import { useEffect, useState } from 'react'
-
-import React, { useCallback, useState, useRef, useEffect } from 'react';
-import { View, FlatList, Text, StyleSheet, RefreshControl, Platform, Image, Animated } from 'react-native';
-import { useRouter } from 'expo-router';
-import { Smile, Leaf, Sparkles } from 'lucide-react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { useApp } from '@/providers/AppProvider';
-import { PublicationCard } from '@/components/PublicationCard';
-import { EmptyState } from '@/components/EmptyState';
-import { Publication } from '@/types';
 
 export default function HomeScreen() {
-  const { approvedPublications, isLoaded, colors, t, textScale } = useApp();
-  const router = useRouter();
-  const [refreshing, setRefreshing] = useState(false);
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-  const slideAnim = useRef(new Animated.Value(20)).current;
-  const breatheAnim = useRef(new Animated.Value(0.5)).current;
+  const { approvedPublications, isLoaded, colors, t, textScale } = useApp()
+  const router = useRouter()
+  const [refreshing, setRefreshing] = useState(false)
+
+  // 👉 AJOUT SUPABASE
+  const [videos, setVideos] = useState<any[]>([])
+
+  const fadeAnim = useRef(new Animated.Value(0)).current
+  const slideAnim = useRef(new Animated.Value(20)).current
+  const breatheAnim = useRef(new Animated.Value(0.5)).current
 
   useEffect(() => {
     if (isLoaded) {
       Animated.parallel([
         Animated.timing(fadeAnim, { toValue: 1, duration: 600, useNativeDriver: true }),
         Animated.timing(slideAnim, { toValue: 0, duration: 600, useNativeDriver: true }),
-      ]).start();
+      ]).start()
     }
-  }, [isLoaded, fadeAnim, slideAnim]);
+  }, [isLoaded, fadeAnim, slideAnim])
 
   useEffect(() => {
     const breathing = Animated.loop(
@@ -34,19 +36,38 @@ export default function HomeScreen() {
         Animated.timing(breatheAnim, { toValue: 1, duration: 4000, useNativeDriver: true }),
         Animated.timing(breatheAnim, { toValue: 0.5, duration: 4000, useNativeDriver: true }),
       ])
-    );
-    breathing.start();
-    return () => breathing.stop();
-  }, [breatheAnim]);
+    )
+    breathing.start()
+    return () => breathing.stop()
+  }, [breatheAnim])
+
+  // 👉 CHARGEMENT DES VIDÉOS DEPUIS SUPABASE
+  useEffect(() => {
+    const loadVideos = async () => {
+      const { data, error } = await supabase
+        .from('videos')
+        .select('*')
+
+      if (error) {
+        console.error('Erreur Supabase:', error)
+        return
+      }
+
+      console.log('VIDEOS =', data)
+      setVideos(data || [])
+    }
+
+    loadVideos()
+  }, [])
 
   const handleReport = useCallback((id: string) => {
-    router.push({ pathname: '/report' as any, params: { publicationId: id } });
-  }, [router]);
+    router.push({ pathname: '/report' as any, params: { publicationId: id } })
+  }, [router])
 
   const handleRefresh = useCallback(() => {
-    setRefreshing(true);
-    setTimeout(() => setRefreshing(false), 600);
-  }, []);
+    setRefreshing(true)
+    setTimeout(() => setRefreshing(false), 600)
+  }, [])
 
   const renderItem = useCallback(({ item }: { item: Publication }) => (
     <PublicationCard
@@ -55,7 +76,7 @@ export default function HomeScreen() {
       showReactions
       onReport={handleReport}
     />
-  ), [handleReport]);
+  ), [handleReport])
 
   const renderHeader = useCallback(() => (
     <Animated.View style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }] }}>
@@ -99,7 +120,7 @@ export default function HomeScreen() {
         <View style={[styles.glowLine, { backgroundColor: colors.border }]} />
       </LinearGradient>
     </Animated.View>
-  ), [fadeAnim, slideAnim, breatheAnim, colors, t, textScale]);
+  ), [fadeAnim, slideAnim, breatheAnim, colors, t, textScale])
 
   const renderEmpty = useCallback(() => (
     <EmptyState
@@ -107,9 +128,9 @@ export default function HomeScreen() {
       title={t.noPublications}
       message={t.noPublicationsMsg}
     />
-  ), [colors, t]);
+  ), [colors, t])
 
-  const keyExtractor = useCallback((item: Publication) => item.id, []);
+  const keyExtractor = useCallback((item: Publication) => item.id, [])
 
   if (!isLoaded) {
     return (
@@ -117,11 +138,16 @@ export default function HomeScreen() {
         <Leaf size={32} color={colors.primary} />
         <Text style={[styles.loadingText, { color: colors.textSecondary }]}>{t.loading}</Text>
       </View>
-    );
+    )
   }
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
+      {/* DEBUG SUPABASE */}
+      <Text style={{ color: colors.textSecondary, margin: 12 }}>
+        Vidéos Supabase chargées : {videos.length}
+      </Text>
+
       <FlatList
         data={approvedPublications}
         renderItem={renderItem}
@@ -144,7 +170,7 @@ export default function HomeScreen() {
         }
       />
     </View>
-  );
+  )
 }
 
 const styles = StyleSheet.create({
@@ -232,4 +258,4 @@ const styles = StyleSheet.create({
     marginTop: 16,
     opacity: 0.6,
   },
-});
+})
