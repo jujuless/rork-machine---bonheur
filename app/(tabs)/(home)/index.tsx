@@ -1,3 +1,6 @@
+import { supabase } from '@/lib/supabase'
+import { useEffect, useState } from 'react'
+
 import React, { useCallback, useState, useRef, useEffect } from 'react';
 import { View, FlatList, Text, StyleSheet, RefreshControl, Platform, Image, Animated } from 'react-native';
 import { useRouter } from 'expo-router';
