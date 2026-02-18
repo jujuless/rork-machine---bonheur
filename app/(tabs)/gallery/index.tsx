@@ -29,9 +29,10 @@ interface FullscreenItemProps {
   isActive: boolean;
   isMuted: boolean;
   onToggleMute: () => void;
+  onFinished: () => void;
 }
 
-const FullscreenItem = React.memo(({ item, isActive, isMuted, onToggleMute }: FullscreenItemProps) => {
+const FullscreenItem = React.memo(({ item, isActive, isMuted, onToggleMute, onFinished }: FullscreenItemProps) => {
   const videoRef = useRef<Video>(null);
   const [isBuffering, setIsBuffering] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -51,11 +52,16 @@ const FullscreenItem = React.memo(({ item, isActive, isMuted, onToggleMute }: Fu
       setIsBuffering(status.isBuffering);
       setIsPlaying(status.isPlaying);
       setHasError(false);
+      if (status.didJustFinish) {
+        console.log('MAB FS: Video finished, advancing to next');
+        videoRef.current?.stopAsync();
+        onFinished();
+      }
     } else if ('error' in status && status.error) {
       console.log('MAB FS: Video error:', status.error);
       setHasError(true);
     }
-  }, []);
+  }, [onFinished]);
 
   const handleTap = useCallback(() => {
     if (!isActive) return;
@@ -85,7 +91,6 @@ const FullscreenItem = React.memo(({ item, isActive, isMuted, onToggleMute }: Fu
           resizeMode={ResizeMode.COVER}
           shouldPlay={!isPaused}
           isMuted={isMuted}
-          isLooping
           onPlaybackStatusUpdate={handleStatusUpdate}
         />
       ) : (
@@ -168,6 +173,11 @@ const FeedItem = React.memo(({ item, isActive, isMuted, onPress, onToggleMute, o
       setIsBuffering(status.isBuffering);
       setIsPlaying(status.isPlaying);
       setHasError(false);
+      if (status.didJustFinish) {
+        console.log('MAB Feed: Video finished, stopping');
+        videoRef.current?.stopAsync();
+        setIsPlaying(false);
+      }
     } else if ('error' in status && status.error) {
       console.log('MAB Feed: Video error:', status.error);
       setHasError(true);
@@ -187,7 +197,6 @@ const FeedItem = React.memo(({ item, isActive, isMuted, onPress, onToggleMute, o
             resizeMode={ResizeMode.COVER}
             shouldPlay
             isMuted={isMuted}
-            isLooping
             onPlaybackStatusUpdate={handleStatusUpdate}
           />
         ) : (
@@ -309,14 +318,28 @@ export default function VideosScreen() {
     />
   ), [activeVideoId, isMuted, handleVideoPress, handleToggleMute, handleOpenFullscreen]);
 
+  const handleFsVideoFinished = useCallback(() => {
+    setFsActiveIndex(prev => {
+      const next = prev + 1;
+      if (next < feedItems.length) {
+        setTimeout(() => {
+          fsListRef.current?.scrollToIndex({ index: next, animated: true });
+        }, 50);
+        return next;
+      }
+      return prev;
+    });
+  }, [feedItems.length]);
+
   const renderFullscreenItem = useCallback(({ item, index }: { item: VideoFeedItem; index: number }) => (
     <FullscreenItem
       item={item}
       isActive={fsActiveIndex === index}
       isMuted={isMuted}
       onToggleMute={handleToggleMute}
+      onFinished={handleFsVideoFinished}
     />
-  ), [fsActiveIndex, isMuted, handleToggleMute]);
+  ), [fsActiveIndex, isMuted, handleToggleMute, handleFsVideoFinished]);
 
   const keyExtractor = useCallback((item: VideoFeedItem) => item.id, []);
 
