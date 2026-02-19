@@ -52,11 +52,14 @@ export default function ModerateurTab() {
   const {
     isModerator, moderatorRole, loginModerator, logoutModerator,
     pendingPublications, reports, approvePublication, rejectPublication,
+    moderatorDeletePublication,
     aiFlaggedPublications, aiValidatedPublications,
     moderatorCodes, createModeratorCode, deleteModeratorCode,
+    publications,
     colors, t,
   } = useApp();
 
+  const [identifier, setIdentifier] = useState('');
   const [code, setCode] = useState('');
   const [showCode, setShowCode] = useState(false);
   const [loginError, setLoginError] = useState('');
@@ -68,19 +71,26 @@ export default function ModerateurTab() {
   const [createError, setCreateError] = useState('');
 
   const handleLogin = useCallback(() => {
-    const success = loginModerator('', code);
+    if (!identifier.trim()) {
+      setLoginError('Veuillez entrer votre identifiant');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      return;
+    }
+    const success = loginModerator(identifier.trim(), code);
     if (!success) {
-      setLoginError('Code incorrect');
+      setLoginError('Identifiant ou code incorrect');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } else {
       setLoginError('');
+      setIdentifier('');
       setCode('');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     }
-  }, [code, loginModerator]);
+  }, [identifier, code, loginModerator]);
 
   const handleLogout = useCallback(() => {
     logoutModerator();
+    setIdentifier('');
     setCode('');
     setActiveTab('pending');
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -97,6 +107,24 @@ export default function ModerateurTab() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     Alert.alert(t.rejectedAlert, t.rejectedAlertMsg);
   }, [rejectPublication, t]);
+
+  const handleDeleteReportedPost = useCallback((publicationId: string) => {
+    Alert.alert(
+      'Supprimer la publication',
+      'Supprimer définitivement cette publication et son signalement ?',
+      [
+        { text: 'Annuler', style: 'cancel' },
+        {
+          text: 'Supprimer',
+          style: 'destructive',
+          onPress: () => {
+            moderatorDeletePublication(publicationId);
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+          },
+        },
+      ]
+    );
+  }, [moderatorDeletePublication]);
 
   const handleCreateCode = useCallback(() => {
     if (!newCode.trim() || !newLabel.trim()) {
@@ -148,9 +176,9 @@ export default function ModerateurTab() {
           <View style={[styles.loginIconWrap, { backgroundColor: colors.primaryLight, borderColor: colors.border }]}>
             <Shield size={48} color={colors.primary} />
           </View>
-          <Text style={[styles.loginTitle, { color: colors.text }]}>Espace Modérateur</Text>
+          <Text style={[styles.loginTitle, { color: colors.text }]}>Espace Modo</Text>
           <Text style={[styles.loginSub, { color: colors.textSecondary }]}>
-            Entrez votre code d'accès pour continuer
+            Connectez-vous pour accéder à l'espace modération
           </Text>
 
           {loginError ? (
@@ -159,6 +187,22 @@ export default function ModerateurTab() {
               <Text style={[styles.errorText, { color: colors.danger }]}>{loginError}</Text>
             </View>
           ) : null}
+
+          <View style={styles.inputGroup}>
+            <Text style={[styles.inputLabel, { color: colors.text }]}>Identifiant</Text>
+            <View style={[styles.passwordWrap, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <TextInput
+                style={[styles.passwordInput, { color: colors.text }]}
+                placeholder="Votre identifiant"
+                placeholderTextColor={colors.textMuted}
+                value={identifier}
+                onChangeText={setIdentifier}
+                autoCapitalize="none"
+                autoCorrect={false}
+                testID="moderator-identifier"
+              />
+            </View>
+          </View>
 
           <View style={styles.inputGroup}>
             <Text style={[styles.inputLabel, { color: colors.text }]}>Code d'accès</Text>
@@ -189,9 +233,9 @@ export default function ModerateurTab() {
           </View>
 
           <Pressable
-            style={[styles.loginBtn, { backgroundColor: colors.primary }, !code && styles.loginBtnDisabled]}
+            style={[styles.loginBtn, { backgroundColor: colors.primary }, (!code || !identifier.trim()) && styles.loginBtnDisabled]}
             onPress={handleLogin}
-            disabled={!code}
+            disabled={!code || !identifier.trim()}
             testID="moderator-login"
           >
             <Text style={[styles.loginBtnText, { color: colors.background }]}>Accéder</Text>
@@ -314,23 +358,41 @@ export default function ModerateurTab() {
                 message="Aucun contenu n'a été signalé pour le moment."
               />
             ) : (
-              reports.map((report: Report) => (
-                <View key={report.id} style={[styles.reportCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                  <View style={styles.reportHeader}>
-                    <View style={[styles.reportIconWrap, { backgroundColor: colors.dangerLight }]}>
-                      <AlertTriangle size={14} color={colors.danger} />
+              reports.map((report: Report) => {
+                const reportedPub = publications.find(p => p.id === report.publicationId);
+                return (
+                  <View key={report.id} style={[styles.reportCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                    <View style={styles.reportHeader}>
+                      <View style={[styles.reportIconWrap, { backgroundColor: colors.dangerLight }]}>
+                        <AlertTriangle size={14} color={colors.danger} />
+                      </View>
+                      <Text style={[styles.reportReason, { color: colors.text }]}>
+                        {REASON_LABELS[report.reason] || report.reason}
+                      </Text>
+                      <Text style={[styles.reportTime, { color: colors.textMuted }]}>{timeAgo(report.createdAt)}</Text>
                     </View>
-                    <Text style={[styles.reportReason, { color: colors.text }]}>
-                      {REASON_LABELS[report.reason] || report.reason}
-                    </Text>
-                    <Text style={[styles.reportTime, { color: colors.textMuted }]}>{timeAgo(report.createdAt)}</Text>
+                    {report.description ? (
+                      <Text style={[styles.reportDesc, { color: colors.textSecondary }]}>{report.description}</Text>
+                    ) : null}
+                    {reportedPub ? (
+                      <Text style={[styles.reportPubPreview, { color: colors.textSecondary }]} numberOfLines={2}>
+                        {reportedPub.text}
+                      </Text>
+                    ) : null}
+                    <View style={styles.reportActions}>
+                      <Text style={[styles.reportPubId, { color: colors.textMuted }]}>ID: {report.publicationId.slice(-8)}</Text>
+                      <Pressable
+                        style={[styles.deleteReportBtn, { backgroundColor: colors.dangerLight }]}
+                        onPress={() => handleDeleteReportedPost(report.publicationId)}
+                        hitSlop={8}
+                      >
+                        <Trash2 size={14} color={colors.danger} />
+                        <Text style={[styles.deleteReportBtnText, { color: colors.danger }]}>Supprimer</Text>
+                      </Pressable>
+                    </View>
                   </View>
-                  {report.description ? (
-                    <Text style={[styles.reportDesc, { color: colors.textSecondary }]}>{report.description}</Text>
-                  ) : null}
-                  <Text style={[styles.reportPubId, { color: colors.textMuted }]}>Publication: {report.publicationId}</Text>
-                </View>
-              ))
+                );
+              })
             )}
           </View>
         )}
@@ -760,7 +822,32 @@ const styles = StyleSheet.create({
   },
   reportPubId: {
     fontSize: 10,
+  },
+  reportPubPreview: {
+    fontSize: 12,
+    lineHeight: 17,
+    marginBottom: 8,
     marginLeft: 34,
+    fontStyle: 'italic' as const,
+  },
+  reportActions: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    justifyContent: 'space-between' as const,
+    marginLeft: 34,
+    marginTop: 4,
+  },
+  deleteReportBtn: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  deleteReportBtnText: {
+    fontSize: 12,
+    fontWeight: '600' as const,
   },
   codesHeader: {
     flexDirection: 'row',

@@ -1,16 +1,10 @@
 import React, { useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable, Alert } from 'react-native';
-import { useRouter } from 'expo-router';
 import { Heart, Shield, BookOpen, MessageCircle, RefreshCw, Leaf, Sparkles } from 'lucide-react-native';
 import { useApp } from '@/providers/AppProvider';
 
 export default function HelpScreen() {
-  const router = useRouter();
   const { resetData, colors, t, textScale } = useApp();
-
-  const handleOpenModerator = useCallback(() => {
-    router.push('/moderator' as any);
-  }, [router]);
 
   const handleReset = useCallback(() => {
     Alert.alert(
@@ -94,11 +88,6 @@ export default function HelpScreen() {
       </View>
 
       <View style={styles.actionsSection}>
-        <Pressable style={[styles.modButton, { backgroundColor: colors.primary }]} onPress={handleOpenModerator} testID="open-moderator">
-          <Shield size={20} color={colors.background} />
-          <Text style={[styles.modButtonText, { color: colors.background }]}>{t.moderatorSpace}</Text>
-        </Pressable>
-
         <Pressable style={[styles.resetButton, { backgroundColor: colors.surface, borderColor: colors.border }]} onPress={handleReset} testID="reset-data">
           <RefreshCw size={18} color={colors.textSecondary} />
           <Text style={[styles.resetButtonText, { color: colors.textSecondary }]}>{t.resetDemo}</Text>

@@ -241,6 +241,13 @@ export const [AppProvider, useApp] = createContextHook(() => {
     ));
   }, [currentUser.id]);
 
+  const moderatorDeletePublication = useCallback((id: string) => {
+    if (!isModerator) return;
+    console.log('MAB: Moderator deleting publication:', id);
+    setPublications(prev => prev.filter(p => p.id !== id));
+    setReports(prev => prev.filter(r => r.publicationId !== id));
+  }, [isModerator]);
+
   const approvePublication = useCallback((id: string) => {
     if (!isModerator) return;
     console.log('MAB: Approving publication:', id);
@@ -379,6 +386,7 @@ export const [AppProvider, useApp] = createContextHook(() => {
     addPublication,
     editPublication,
     deletePublication,
+    moderatorDeletePublication,
     approvePublication,
     rejectPublication,
     reportPublication,

@@ -63,7 +63,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="moderateur"
         options={{
-          title: 'Modérateur',
+          title: 'Modo',
           tabBarIcon: ({ color, size }) => <Shield size={size} color={color} />,
         }}
       />
