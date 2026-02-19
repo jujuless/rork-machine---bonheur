@@ -1,14 +1,17 @@
 import React, { useState, useCallback } from 'react';
 import {
-  View, Text, StyleSheet, TextInput, Pressable, Alert, ScrollView,
+  View, Text, StyleSheet, TextInput, Pressable, Alert, ScrollView, Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Shield, LogOut, Clock, AlertTriangle, Eye, EyeOff, Leaf } from 'lucide-react-native';
+import {
+  Shield, LogOut, Clock, AlertTriangle, Eye, EyeOff, Leaf,
+  Crown, Bot, Plus, Trash2, Key, Users, ChevronRight, X, Check,
+} from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { useApp } from '@/providers/AppProvider';
 import { PublicationCard } from '@/components/PublicationCard';
 import { EmptyState } from '@/components/EmptyState';
-import { Publication, Report } from '@/types';
+import { Publication, Report, ModeratorRole, ModeratorCode } from '@/types';
 import { timeAgo } from '@/utils/timeAgo';
 
 const REASON_LABELS: Record<string, string> = {
@@ -19,16 +22,50 @@ const REASON_LABELS: Record<string, string> = {
   other: 'Autre',
 };
 
+const ROLE_CONFIG: Record<ModeratorRole, { label: string; color: string; bg: string; icon: React.ReactNode; desc: string }> = {
+  ultime: {
+    label: 'Modérateur Ultime',
+    color: '#F59E0B',
+    bg: '#2D2206',
+    icon: null,
+    desc: 'Accès complet + gestion des codes',
+  },
+  standard: {
+    label: 'Modérateur',
+    color: '#4ADE80',
+    bg: '#122A1B',
+    icon: null,
+    desc: 'Signalements utilisateurs & IA',
+  },
+  ia_validator: {
+    label: 'Modérateur IA',
+    color: '#818CF8',
+    bg: '#1E1B4B',
+    icon: null,
+    desc: 'Validation des contenus pré-approuvés IA',
+  },
+};
+
+type DashTab = 'pending' | 'reports' | 'ai' | 'codes';
+
 export default function ModerateurTab() {
   const {
-    isModerator, loginModerator, logoutModerator,
+    isModerator, moderatorRole, loginModerator, logoutModerator,
     pendingPublications, reports, approvePublication, rejectPublication,
+    aiFlaggedPublications, aiValidatedPublications,
+    moderatorCodes, createModeratorCode, deleteModeratorCode,
     colors, t,
   } = useApp();
 
   const [code, setCode] = useState('');
   const [showCode, setShowCode] = useState(false);
   const [loginError, setLoginError] = useState('');
+  const [activeTab, setActiveTab] = useState<DashTab>('pending');
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [newCode, setNewCode] = useState('');
+  const [newLabel, setNewLabel] = useState('');
+  const [newRole, setNewRole] = useState<ModeratorRole>('standard');
+  const [createError, setCreateError] = useState('');
 
   const handleLogin = useCallback(() => {
     const success = loginModerator('', code);
@@ -45,6 +82,7 @@ export default function ModerateurTab() {
   const handleLogout = useCallback(() => {
     logoutModerator();
     setCode('');
+    setActiveTab('pending');
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
   }, [logoutModerator]);
 
@@ -60,21 +98,57 @@ export default function ModerateurTab() {
     Alert.alert(t.rejectedAlert, t.rejectedAlertMsg);
   }, [rejectPublication, t]);
 
-  if (!isModerator) {
+  const handleCreateCode = useCallback(() => {
+    if (!newCode.trim() || !newLabel.trim()) {
+      setCreateError('Remplissez tous les champs');
+      return;
+    }
+    if (newCode.trim().length < 4) {
+      setCreateError('Le code doit faire au moins 4 caractères');
+      return;
+    }
+    const ok = createModeratorCode(newCode.trim(), newRole, newLabel.trim());
+    if (!ok) {
+      setCreateError('Ce code existe déjà');
+      return;
+    }
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    setNewCode('');
+    setNewLabel('');
+    setNewRole('standard');
+    setCreateError('');
+    setShowCreateModal(false);
+  }, [newCode, newLabel, newRole, createModeratorCode]);
+
+  const handleDeleteCode = useCallback((item: ModeratorCode) => {
+    Alert.alert(
+      'Supprimer le code',
+      `Supprimer le code de "${item.label}" ?`,
+      [
+        { text: 'Annuler', style: 'cancel' },
+        {
+          text: 'Supprimer',
+          style: 'destructive',
+          onPress: () => {
+            deleteModeratorCode(item.id);
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+          },
+        },
+      ]
+    );
+  }, [deleteModeratorCode]);
+
+  if (!isModerator || !moderatorRole) {
     return (
       <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top', 'bottom']}>
         <View style={styles.loginContainer}>
           <View style={styles.loginDecor} pointerEvents="none">
             <Leaf size={180} color={colors.primary} />
           </View>
-
           <View style={[styles.loginIconWrap, { backgroundColor: colors.primaryLight, borderColor: colors.border }]}>
             <Shield size={48} color={colors.primary} />
           </View>
-
-          <Text style={[styles.loginTitle, { color: colors.text }]}>
-            Espace Modérateur
-          </Text>
+          <Text style={[styles.loginTitle, { color: colors.text }]}>Espace Modérateur</Text>
           <Text style={[styles.loginSub, { color: colors.textSecondary }]}>
             Entrez votre code d'accès pour continuer
           </Text>
@@ -127,77 +201,332 @@ export default function ModerateurTab() {
     );
   }
 
+  const roleCfg = ROLE_CONFIG[moderatorRole];
+  const isUltime = moderatorRole === 'ultime';
+  const isIaValidator = moderatorRole === 'ia_validator';
+
+  const allTabs: { key: DashTab; label: string; count: number; show: boolean }[] = [
+    { key: 'pending' as DashTab, label: 'En attente', count: isIaValidator ? aiValidatedPublications.length : pendingPublications.length, show: true },
+    { key: 'reports' as DashTab, label: 'Signalements', count: reports.length, show: !isIaValidator },
+    { key: 'ai' as DashTab, label: 'Signalés IA', count: aiFlaggedPublications.length, show: isUltime || isIaValidator },
+    { key: 'codes' as DashTab, label: 'Codes', count: moderatorCodes.length, show: isUltime },
+  ];
+  const tabs = allTabs.filter(tab => tab.show);
+
+  const validActiveTab = tabs.find(t => t.key === activeTab) ? activeTab : tabs[0]?.key ?? 'pending';
+
+  const pendingList = isIaValidator ? aiValidatedPublications : pendingPublications;
+
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
       <View style={[styles.dashHeader, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
-        <View>
-          <Text style={[styles.dashGreeting, { color: colors.text }]}>Modérateur</Text>
-          <Text style={[styles.dashSub, { color: colors.textSecondary }]}>{t.moderationPanel}</Text>
+        <View style={styles.dashHeaderLeft}>
+          <View style={[styles.roleBadge, { backgroundColor: roleCfg.bg }]}>
+            {isUltime ? (
+              <Crown size={14} color={roleCfg.color} />
+            ) : isIaValidator ? (
+              <Bot size={14} color={roleCfg.color} />
+            ) : (
+              <Shield size={14} color={roleCfg.color} />
+            )}
+            <Text style={[styles.roleBadgeText, { color: roleCfg.color }]}>
+              {isUltime ? '"Modérateur Ultime"' : roleCfg.label}
+            </Text>
+          </View>
+          <Text style={[styles.dashSub, { color: colors.textSecondary }]}>{roleCfg.desc}</Text>
         </View>
         <Pressable style={[styles.logoutBtn, { backgroundColor: colors.dangerLight }]} onPress={handleLogout}>
-          <LogOut size={18} color={colors.danger} />
-          <Text style={[styles.logoutText, { color: colors.danger }]}>{t.disconnect}</Text>
+          <LogOut size={16} color={colors.danger} />
+          <Text style={[styles.logoutText, { color: colors.danger }]}>Quitter</Text>
         </Pressable>
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} style={styles.dashScroll}>
-        <View style={styles.statsBar}>
-          <View style={[styles.statCard, { backgroundColor: colors.pendingLight, borderColor: colors.border }]}>
-            <Clock size={22} color={colors.pending} />
-            <Text style={[styles.statNum, { color: colors.pending }]}>{pendingPublications.length}</Text>
-            <Text style={[styles.statLbl, { color: colors.textSecondary }]}>{t.pending}</Text>
-          </View>
-          <View style={[styles.statCard, { backgroundColor: colors.dangerLight, borderColor: colors.border }]}>
-            <AlertTriangle size={22} color={colors.danger} />
-            <Text style={[styles.statNum, { color: colors.danger }]}>{reports.length}</Text>
-            <Text style={[styles.statLbl, { color: colors.textSecondary }]}>{t.recentReports}</Text>
-          </View>
-        </View>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={[styles.tabBar, { borderBottomColor: colors.border }]}
+        contentContainerStyle={styles.tabBarContent}
+      >
+        {tabs.map(tab => {
+          const active = validActiveTab === tab.key;
+          return (
+            <Pressable
+              key={tab.key}
+              style={[styles.tabBtn, active && { borderBottomColor: isUltime ? '#F59E0B' : colors.primary, borderBottomWidth: 2 }]}
+              onPress={() => setActiveTab(tab.key)}
+            >
+              <Text style={[styles.tabLabel, { color: active ? (isUltime ? '#F59E0B' : colors.primary) : colors.textMuted }]}>
+                {tab.label}
+              </Text>
+              {tab.count > 0 ? (
+                <View style={[styles.tabCount, { backgroundColor: active ? (isUltime ? '#F59E0B' : colors.primary) : colors.surface }]}>
+                  <Text style={[styles.tabCountText, { color: active ? colors.background : colors.textMuted }]}>{tab.count}</Text>
+                </View>
+              ) : null}
+            </Pressable>
+          );
+        })}
+      </ScrollView>
 
-        <Text style={[styles.dashSection, { color: colors.text }]}>{t.pendingPublications}</Text>
-        {pendingPublications.length === 0 ? (
-          <EmptyState
-            icon={<Clock size={40} color={colors.textMuted} />}
-            title={t.noPendingPubs}
-            message={t.noPendingPubsMsg}
-          />
-        ) : (
-          pendingPublications.map((pub: Publication) => (
-            <PublicationCard
-              key={pub.id}
-              publication={pub}
-              showStatus
-              showModeratorActions
-              showReportButton={false}
-              onApprove={handleApprove}
-              onReject={handleReject}
-            />
-          ))
+      <ScrollView showsVerticalScrollIndicator={false} style={styles.dashScroll}>
+        {validActiveTab === 'pending' && (
+          <View>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>
+              {isIaValidator ? 'Publications pré-validées IA' : 'Publications en attente'}
+            </Text>
+            {isIaValidator && (
+              <View style={[styles.infoBanner, { backgroundColor: '#1E1B4B', borderColor: '#4338CA' }]}>
+                <Bot size={14} color="#818CF8" />
+                <Text style={[styles.infoBannerText, { color: '#818CF8' }]}>
+                  Ces publications ont été pré-approuvées par l'IA et n'ont aucun signalement actif.
+                </Text>
+              </View>
+            )}
+            {pendingList.length === 0 ? (
+              <EmptyState
+                icon={<Clock size={40} color={colors.textMuted} />}
+                title={t.noPendingPubs}
+                message={t.noPendingPubsMsg}
+              />
+            ) : (
+              pendingList.map((pub: Publication) => (
+                <PublicationCard
+                  key={pub.id}
+                  publication={pub}
+                  showStatus
+                  showModeratorActions
+                  showReportButton={false}
+                  onApprove={handleApprove}
+                  onReject={handleReject}
+                />
+              ))
+            )}
+          </View>
         )}
 
-        {reports.length > 0 ? (
+        {validActiveTab === 'reports' && (
           <View>
-            <Text style={[styles.dashSection, { color: colors.text }]}>{t.recentReports}</Text>
-            {reports.map((report: Report) => (
-              <View key={report.id} style={[styles.reportCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                <View style={styles.reportHeader}>
-                  <AlertTriangle size={16} color={colors.danger} />
-                  <Text style={[styles.reportReason, { color: colors.text }]}>
-                    {REASON_LABELS[report.reason] || report.reason}
-                  </Text>
-                  <Text style={[styles.reportTime, { color: colors.textMuted }]}>{timeAgo(report.createdAt)}</Text>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Signalements</Text>
+            {reports.length === 0 ? (
+              <EmptyState
+                icon={<AlertTriangle size={40} color={colors.textMuted} />}
+                title="Aucun signalement"
+                message="Aucun contenu n'a été signalé pour le moment."
+              />
+            ) : (
+              reports.map((report: Report) => (
+                <View key={report.id} style={[styles.reportCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                  <View style={styles.reportHeader}>
+                    <View style={[styles.reportIconWrap, { backgroundColor: colors.dangerLight }]}>
+                      <AlertTriangle size={14} color={colors.danger} />
+                    </View>
+                    <Text style={[styles.reportReason, { color: colors.text }]}>
+                      {REASON_LABELS[report.reason] || report.reason}
+                    </Text>
+                    <Text style={[styles.reportTime, { color: colors.textMuted }]}>{timeAgo(report.createdAt)}</Text>
+                  </View>
+                  {report.description ? (
+                    <Text style={[styles.reportDesc, { color: colors.textSecondary }]}>{report.description}</Text>
+                  ) : null}
+                  <Text style={[styles.reportPubId, { color: colors.textMuted }]}>Publication: {report.publicationId}</Text>
                 </View>
-                {report.description ? (
-                  <Text style={[styles.reportDesc, { color: colors.textSecondary }]}>{report.description}</Text>
-                ) : null}
-                <Text style={[styles.reportPubId, { color: colors.textMuted }]}>{t.publicationLabel}: {report.publicationId}</Text>
-              </View>
-            ))}
+              ))
+            )}
           </View>
-        ) : null}
+        )}
+
+        {validActiveTab === 'ai' && (
+          <View>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Signalés par l'IA</Text>
+            <View style={[styles.infoBanner, { backgroundColor: '#2D1B4E', borderColor: '#7C3AED' }]}>
+              <Bot size={14} color="#A78BFA" />
+              <Text style={[styles.infoBannerText, { color: '#A78BFA' }]}>
+                Ces contenus ont été automatiquement détectés comme potentiellement générés par IA.
+              </Text>
+            </View>
+            {aiFlaggedPublications.length === 0 ? (
+              <EmptyState
+                icon={<Bot size={40} color={colors.textMuted} />}
+                title="Aucun contenu signalé IA"
+                message="L'IA n'a détecté aucun contenu suspect pour le moment."
+              />
+            ) : (
+              aiFlaggedPublications.map((pub: Publication) => (
+                <PublicationCard
+                  key={pub.id}
+                  publication={pub}
+                  showStatus
+                  showModeratorActions
+                  showReportButton={false}
+                  onApprove={handleApprove}
+                  onReject={handleReject}
+                />
+              ))
+            )}
+          </View>
+        )}
+
+        {validActiveTab === 'codes' && isUltime && (
+          <View>
+            <View style={styles.codesHeader}>
+              <Text style={[styles.sectionTitle, { color: colors.text, marginBottom: 0 }]}>Gestion des codes</Text>
+              <Pressable
+                style={[styles.createCodeBtn, { backgroundColor: '#F59E0B' }]}
+                onPress={() => setShowCreateModal(true)}
+              >
+                <Plus size={16} color="#000" />
+                <Text style={styles.createCodeBtnText}>Créer</Text>
+              </Pressable>
+            </View>
+
+            <View style={[styles.builtinSection, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <Text style={[styles.builtinTitle, { color: colors.textSecondary }]}>Codes intégrés (non modifiables)</Text>
+              {[
+                { code: 'Modérateur123', role: 'ultime' as ModeratorRole, label: '"Modérateur Ultime"' },
+                { code: 'MAB01', role: 'standard' as ModeratorRole, label: 'Modérateur' },
+              ].map(item => {
+                const cfg = ROLE_CONFIG[item.role];
+                return (
+                  <View key={item.code} style={[styles.codeItem, { borderBottomColor: colors.border }]}>
+                    <View style={[styles.codeIconWrap, { backgroundColor: cfg.bg }]}>
+                      <Key size={14} color={cfg.color} />
+                    </View>
+                    <View style={styles.codeInfo}>
+                      <Text style={[styles.codeName, { color: colors.text }]}>{item.label}</Text>
+                      <View style={[styles.roleTag, { backgroundColor: cfg.bg }]}>
+                        <Text style={[styles.roleTagText, { color: cfg.color }]}>{cfg.label}</Text>
+                      </View>
+                    </View>
+                    <View style={[styles.lockBadge, { backgroundColor: colors.surfaceLight }]}>
+                      <Text style={[styles.lockBadgeText, { color: colors.textMuted }]}>Intégré</Text>
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+
+            {moderatorCodes.length === 0 ? (
+              <View style={styles.emptyCodesWrap}>
+                <Users size={36} color={colors.textMuted} />
+                <Text style={[styles.emptyCodesTitle, { color: colors.textSecondary }]}>Aucun code créé</Text>
+                <Text style={[styles.emptyCodesDesc, { color: colors.textMuted }]}>
+                  Appuyez sur "Créer" pour attribuer un accès modérateur à un collaborateur.
+                </Text>
+              </View>
+            ) : (
+              <View style={[styles.dynamicSection, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <Text style={[styles.builtinTitle, { color: colors.textSecondary }]}>Codes créés par vous</Text>
+                {moderatorCodes.map((item: ModeratorCode) => {
+                  const cfg = ROLE_CONFIG[item.role];
+                  return (
+                    <View key={item.id} style={[styles.codeItem, { borderBottomColor: colors.border }]}>
+                      <View style={[styles.codeIconWrap, { backgroundColor: cfg.bg }]}>
+                        <Key size={14} color={cfg.color} />
+                      </View>
+                      <View style={styles.codeInfo}>
+                        <Text style={[styles.codeName, { color: colors.text }]}>{item.label}</Text>
+                        <View style={[styles.roleTag, { backgroundColor: cfg.bg }]}>
+                          <Text style={[styles.roleTagText, { color: cfg.color }]}>{cfg.label}</Text>
+                        </View>
+                        <Text style={[styles.codeDate, { color: colors.textMuted }]}>{timeAgo(item.createdAt)}</Text>
+                      </View>
+                      <Pressable
+                        style={[styles.deleteCodeBtn, { backgroundColor: colors.dangerLight }]}
+                        onPress={() => handleDeleteCode(item)}
+                        hitSlop={8}
+                      >
+                        <Trash2 size={16} color={colors.danger} />
+                      </Pressable>
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+          </View>
+        )}
 
         <View style={styles.bottomSpacer} />
       </ScrollView>
+
+      <Modal
+        visible={showCreateModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowCreateModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalSheet, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <View style={styles.modalHandle} />
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>Créer un code modérateur</Text>
+              <Pressable onPress={() => setShowCreateModal(false)} hitSlop={12}>
+                <X size={22} color={colors.textMuted} />
+              </Pressable>
+            </View>
+
+            {createError ? (
+              <View style={[styles.errorBanner, { backgroundColor: colors.dangerLight, marginBottom: 12 }]}>
+                <AlertTriangle size={14} color={colors.danger} />
+                <Text style={[styles.errorText, { color: colors.danger }]}>{createError}</Text>
+              </View>
+            ) : null}
+
+            <Text style={[styles.modalLabel, { color: colors.text }]}>Nom du modérateur</Text>
+            <TextInput
+              style={[styles.modalInput, { backgroundColor: colors.background, color: colors.text, borderColor: colors.border }]}
+              placeholder="Ex: Sophie, Équipe Alpha..."
+              placeholderTextColor={colors.textMuted}
+              value={newLabel}
+              onChangeText={setNewLabel}
+            />
+
+            <Text style={[styles.modalLabel, { color: colors.text }]}>Code d'accès</Text>
+            <TextInput
+              style={[styles.modalInput, { backgroundColor: colors.background, color: colors.text, borderColor: colors.border }]}
+              placeholder="Ex: Mod2024, Secure99..."
+              placeholderTextColor={colors.textMuted}
+              value={newCode}
+              onChangeText={setNewCode}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+
+            <Text style={[styles.modalLabel, { color: colors.text }]}>Rôle</Text>
+            <View style={styles.roleSelector}>
+              {(['standard', 'ia_validator'] as ModeratorRole[]).map(role => {
+                const cfg = ROLE_CONFIG[role];
+                const selected = newRole === role;
+                return (
+                  <Pressable
+                    key={role}
+                    style={[
+                      styles.roleSelectorItem,
+                      { borderColor: selected ? cfg.color : colors.border, backgroundColor: selected ? cfg.bg : colors.background },
+                    ]}
+                    onPress={() => setNewRole(role)}
+                  >
+                    <View style={styles.roleSelectorRow}>
+                      {selected ? <Check size={14} color={cfg.color} /> : <View style={styles.roleCheckPlaceholder} />}
+                      <Text style={[styles.roleSelectorLabel, { color: selected ? cfg.color : colors.textSecondary }]}>
+                        {cfg.label}
+                      </Text>
+                    </View>
+                    <Text style={[styles.roleSelectorDesc, { color: colors.textMuted }]}>{cfg.desc}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <Pressable
+              style={[styles.createConfirmBtn, { backgroundColor: '#F59E0B' }]}
+              onPress={handleCreateCode}
+            >
+              <Key size={16} color="#000" />
+              <Text style={styles.createConfirmBtnText}>Créer le code</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -255,6 +584,7 @@ const styles = StyleSheet.create({
   errorText: {
     fontSize: 13,
     fontWeight: '500' as const,
+    flex: 1,
   },
   inputGroup: {
     marginBottom: 20,
@@ -298,68 +628,105 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingVertical: 14,
     borderBottomWidth: 1,
   },
-  dashGreeting: {
-    fontSize: 22,
+  dashHeaderLeft: {
+    gap: 6,
+    flex: 1,
+  },
+  roleBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 20,
+  },
+  roleBadgeText: {
+    fontSize: 13,
     fontWeight: '700' as const,
   },
   dashSub: {
-    fontSize: 13,
-    marginTop: 2,
+    fontSize: 12,
   },
   logoutBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 5,
     paddingVertical: 8,
-    paddingHorizontal: 14,
+    paddingHorizontal: 12,
     borderRadius: 10,
     borderWidth: 1,
     borderColor: 'rgba(239,68,68,0.2)',
   },
   logoutText: {
+    fontSize: 12,
+    fontWeight: '600' as const,
+  },
+  tabBar: {
+    borderBottomWidth: 1,
+    flexGrow: 0,
+  },
+  tabBarContent: {
+    paddingHorizontal: 16,
+  },
+  tabBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 12,
+    paddingHorizontal: 4,
+    marginRight: 20,
+  },
+  tabLabel: {
     fontSize: 13,
     fontWeight: '600' as const,
+  },
+  tabCount: {
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 6,
+  },
+  tabCountText: {
+    fontSize: 11,
+    fontWeight: '700' as const,
   },
   dashScroll: {
     flex: 1,
   },
-  statsBar: {
-    flexDirection: 'row',
-    gap: 12,
-    paddingHorizontal: 16,
-    paddingTop: 20,
-  },
-  statCard: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: 18,
-    borderRadius: 16,
-    gap: 6,
-    borderWidth: 1,
-  },
-  statNum: {
-    fontSize: 28,
-    fontWeight: '800' as const,
-  },
-  statLbl: {
-    fontSize: 12,
-    fontWeight: '500' as const,
-  },
-  dashSection: {
-    fontSize: 18,
+  sectionTitle: {
+    fontSize: 17,
     fontWeight: '700' as const,
     paddingHorizontal: 20,
-    marginTop: 24,
-    marginBottom: 8,
+    marginTop: 20,
+    marginBottom: 12,
+  },
+  infoBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    marginHorizontal: 16,
+    marginBottom: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  infoBannerText: {
+    fontSize: 12,
+    lineHeight: 18,
+    flex: 1,
   },
   reportCard: {
     marginHorizontal: 16,
     marginVertical: 5,
     borderRadius: 14,
-    padding: 16,
+    padding: 14,
     borderLeftWidth: 3,
     borderLeftColor: '#EF4444',
     borderWidth: 1,
@@ -370,8 +737,15 @@ const styles = StyleSheet.create({
     gap: 8,
     marginBottom: 6,
   },
+  reportIconWrap: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   reportReason: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600' as const,
     flex: 1,
   },
@@ -379,14 +753,213 @@ const styles = StyleSheet.create({
     fontSize: 11,
   },
   reportDesc: {
-    fontSize: 13,
-    lineHeight: 18,
+    fontSize: 12,
+    lineHeight: 17,
     marginBottom: 6,
+    marginLeft: 34,
   },
   reportPubId: {
+    fontSize: 10,
+    marginLeft: 34,
+  },
+  codesHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    marginTop: 20,
+    marginBottom: 16,
+  },
+  createCodeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 10,
+  },
+  createCodeBtnText: {
+    color: '#000',
+    fontWeight: '700' as const,
+    fontSize: 13,
+  },
+  builtinSection: {
+    marginHorizontal: 16,
+    borderRadius: 14,
+    borderWidth: 1,
+    overflow: 'hidden',
+    marginBottom: 16,
+  },
+  builtinTitle: {
     fontSize: 11,
+    fontWeight: '600' as const,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  codeItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+  },
+  codeIconWrap: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  codeInfo: {
+    flex: 1,
+    gap: 4,
+  },
+  codeName: {
+    fontSize: 14,
+    fontWeight: '600' as const,
+  },
+  roleTag: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  roleTagText: {
+    fontSize: 11,
+    fontWeight: '600' as const,
+  },
+  codeDate: {
+    fontSize: 11,
+  },
+  lockBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  lockBadgeText: {
+    fontSize: 11,
+    fontWeight: '500' as const,
+  },
+  deleteCodeBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  dynamicSection: {
+    marginHorizontal: 16,
+    borderRadius: 14,
+    borderWidth: 1,
+    overflow: 'hidden',
+    marginBottom: 16,
+  },
+  emptyCodesWrap: {
+    alignItems: 'center',
+    paddingVertical: 32,
+    paddingHorizontal: 32,
+    gap: 10,
+  },
+  emptyCodesTitle: {
+    fontSize: 15,
+    fontWeight: '600' as const,
+  },
+  emptyCodesDesc: {
+    fontSize: 13,
+    textAlign: 'center',
+    lineHeight: 19,
   },
   bottomSpacer: {
     height: 40,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'flex-end',
+  },
+  modalSheet: {
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    borderWidth: 1,
+    borderBottomWidth: 0,
+    paddingHorizontal: 20,
+    paddingBottom: 40,
+    paddingTop: 12,
+  },
+  modalHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    alignSelf: 'center',
+    marginBottom: 16,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 20,
+  },
+  modalTitle: {
+    fontSize: 17,
+    fontWeight: '700' as const,
+  },
+  modalLabel: {
+    fontSize: 13,
+    fontWeight: '600' as const,
+    marginBottom: 6,
+    marginTop: 14,
+  },
+  modalInput: {
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    fontSize: 15,
+    borderWidth: 1,
+  },
+  roleSelector: {
+    gap: 8,
+    marginTop: 4,
+  },
+  roleSelectorItem: {
+    borderRadius: 12,
+    borderWidth: 1.5,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+  },
+  roleSelectorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 2,
+  },
+  roleCheckPlaceholder: {
+    width: 14,
+    height: 14,
+  },
+  roleSelectorLabel: {
+    fontSize: 14,
+    fontWeight: '600' as const,
+  },
+  roleSelectorDesc: {
+    fontSize: 12,
+    marginLeft: 22,
+  },
+  createConfirmBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 15,
+    borderRadius: 14,
+    marginTop: 20,
+  },
+  createConfirmBtnText: {
+    fontSize: 15,
+    fontWeight: '700' as const,
+    color: '#000',
   },
 });

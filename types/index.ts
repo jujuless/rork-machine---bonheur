@@ -30,6 +30,15 @@ export interface Report {
 export type ReportReason = 'fake_news' | 'insults' | 'nudity' | 'ai_content' | 'other';
 export type PublicationStatus = Publication['status'];
 export type ReactionType = 'seedling' | 'smile' | 'heart';
+export type ModeratorRole = 'ultime' | 'standard' | 'ia_validator';
+
+export interface ModeratorCode {
+  id: string;
+  code: string;
+  role: ModeratorRole;
+  label: string;
+  createdAt: string;
+}
 
 export interface AppSettings {
   language: 'fr' | 'en';

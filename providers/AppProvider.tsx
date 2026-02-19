@@ -1,7 +1,7 @@
 import createContextHook from '@nkzw/create-context-hook';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Publication, Report, ReportReason, User, AppSettings, ReactionType, ColorTheme } from '@/types';
+import { Publication, Report, ReportReason, User, AppSettings, ReactionType, ColorTheme, ModeratorRole, ModeratorCode } from '@/types';
 import { DarkColors, LightColors } from '@/constants/colors';
 import { translations, TranslationStrings } from '@/constants/translations';
 import { MOCK_PUBLICATIONS } from '@/mocks/publications';
@@ -12,6 +12,7 @@ const STORAGE_KEYS = {
   settings: 'mab_settings',
   profile: 'mab_profile',
   reactions: 'mab_reactions',
+  moderatorCodes: 'mab_moderator_codes',
 } as const;
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -26,10 +27,17 @@ const DEFAULT_PROFILE = {
   avatarUrl: undefined as string | undefined,
 };
 
+const BUILTIN_CODES: Record<string, ModeratorRole> = {
+  'Modérateur123': 'ultime',
+  'MAB01': 'standard',
+};
+
 export const [AppProvider, useApp] = createContextHook(() => {
   const [publications, setPublications] = useState<Publication[]>([]);
   const [reports, setReports] = useState<Report[]>([]);
   const [isModerator, setIsModerator] = useState(false);
+  const [moderatorRole, setModeratorRole] = useState<ModeratorRole | null>(null);
+  const [moderatorCodes, setModeratorCodes] = useState<ModeratorCode[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
   const isInitialLoad = useRef(true);
 
@@ -67,12 +75,13 @@ export const [AppProvider, useApp] = createContextHook(() => {
   useEffect(() => {
     const loadData = async () => {
       try {
-        const [storedPubs, storedReports, storedSettings, storedProfile, storedReactions] = await Promise.all([
+        const [storedPubs, storedReports, storedSettings, storedProfile, storedReactions, storedModCodes] = await Promise.all([
           AsyncStorage.getItem(STORAGE_KEYS.publications),
           AsyncStorage.getItem(STORAGE_KEYS.reports),
           AsyncStorage.getItem(STORAGE_KEYS.settings),
           AsyncStorage.getItem(STORAGE_KEYS.profile),
           AsyncStorage.getItem(STORAGE_KEYS.reactions),
+          AsyncStorage.getItem(STORAGE_KEYS.moderatorCodes),
         ]);
 
         if (storedPubs) {
@@ -96,6 +105,10 @@ export const [AppProvider, useApp] = createContextHook(() => {
 
         if (storedReactions) {
           setReactions(JSON.parse(storedReactions));
+        }
+
+        if (storedModCodes) {
+          setModeratorCodes(JSON.parse(storedModCodes) as ModeratorCode[]);
         }
       } catch (error) {
         console.log('MAB: Error loading data:', error);
@@ -143,6 +156,13 @@ export const [AppProvider, useApp] = createContextHook(() => {
     }
   }, [reactions, isLoaded]);
 
+  useEffect(() => {
+    if (!isInitialLoad.current && isLoaded) {
+      AsyncStorage.setItem(STORAGE_KEYS.moderatorCodes, JSON.stringify(moderatorCodes))
+        .catch(err => console.log('MAB: Error saving moderator codes:', err));
+    }
+  }, [moderatorCodes, isLoaded]);
+
   const approvedPublications = useMemo(
     () => publications
       .filter(p => p.status === 'approved')
@@ -174,6 +194,21 @@ export const [AppProvider, useApp] = createContextHook(() => {
       .filter(p => p.status === 'approved' && p.videoUrl)
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
     [publications]
+  );
+
+  const aiReportedIds = useMemo(
+    () => new Set(reports.filter(r => r.reason === 'ai_content').map(r => r.publicationId)),
+    [reports]
+  );
+
+  const aiFlaggedPublications = useMemo(
+    () => publications.filter(p => aiReportedIds.has(p.id)),
+    [publications, aiReportedIds]
+  );
+
+  const aiValidatedPublications = useMemo(
+    () => pendingPublications.filter(p => !aiReportedIds.has(p.id)),
+    [pendingPublications, aiReportedIds]
   );
 
   const addPublication = useCallback((text: string, imageUrl?: string) => {
@@ -237,19 +272,57 @@ export const [AppProvider, useApp] = createContextHook(() => {
   }, [currentUser.id]);
 
   const loginModerator = useCallback((_username: string, password: string): boolean => {
-    if (password === 'Modérateur123' || password === 'MAB01') {
-      console.log('MAB: Moderator logged in');
+    const builtinRole = BUILTIN_CODES[password];
+    if (builtinRole) {
+      console.log('MAB: Moderator logged in with role:', builtinRole);
       setIsModerator(true);
+      setModeratorRole(builtinRole);
+      return true;
+    }
+    const dynCode = moderatorCodes.find(c => c.code === password);
+    if (dynCode) {
+      console.log('MAB: Moderator logged in with dynamic code, role:', dynCode.role);
+      setIsModerator(true);
+      setModeratorRole(dynCode.role);
       return true;
     }
     console.log('MAB: Moderator login failed');
     return false;
-  }, []);
+  }, [moderatorCodes]);
 
   const logoutModerator = useCallback(() => {
     console.log('MAB: Moderator logged out');
     setIsModerator(false);
+    setModeratorRole(null);
   }, []);
+
+  const createModeratorCode = useCallback((code: string, role: ModeratorRole, label: string): boolean => {
+    if (moderatorRole !== 'ultime') return false;
+    const allExisting = [
+      ...Object.keys(BUILTIN_CODES),
+      ...moderatorCodes.map(c => c.code),
+    ];
+    if (allExisting.includes(code)) {
+      console.log('MAB: Code already exists');
+      return false;
+    }
+    const newCode: ModeratorCode = {
+      id: `modcode-${Date.now()}`,
+      code,
+      role,
+      label,
+      createdAt: new Date().toISOString(),
+    };
+    console.log('MAB: Creating moderator code:', newCode.id, role);
+    setModeratorCodes(prev => [...prev, newCode]);
+    return true;
+  }, [moderatorRole, moderatorCodes]);
+
+  const deleteModeratorCode = useCallback((id: string) => {
+    if (moderatorRole !== 'ultime') return;
+    console.log('MAB: Deleting moderator code:', id);
+    setModeratorCodes(prev => prev.filter(c => c.id !== id));
+  }, [moderatorRole]);
 
   const resetData = useCallback(async () => {
     console.log('MAB: Resetting all data');
@@ -296,8 +369,12 @@ export const [AppProvider, useApp] = createContextHook(() => {
     userPublications,
     galleryPublications,
     videoPublications,
+    aiFlaggedPublications,
+    aiValidatedPublications,
     reports,
     isModerator,
+    moderatorRole,
+    moderatorCodes,
     isLoaded,
     addPublication,
     editPublication,
@@ -307,6 +384,8 @@ export const [AppProvider, useApp] = createContextHook(() => {
     reportPublication,
     loginModerator,
     logoutModerator,
+    createModeratorCode,
+    deleteModeratorCode,
     resetData,
     settings,
     updateSettings,
