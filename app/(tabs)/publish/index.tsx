@@ -54,22 +54,22 @@ export default function PublishScreen() {
 
   const uploadToSupabase = async (uri: string, type: 'image' | 'video') => {
     const response = await fetch(uri);
-    const arrayBuffer = await response.arrayBuffer();
+    const blob = await response.blob();
 
     const ext = type === 'video' ? 'mp4' : 'jpg';
     const fileName = `${Date.now()}.${ext}`;
     const contentType = type === 'video' ? 'video/mp4' : 'image/jpeg';
 
     const { error } = await supabase.storage
-      .from('media')
-      .upload(fileName, arrayBuffer, {
+      .from('video') // ✅ BON BUCKET
+      .upload(fileName, blob, {
         contentType,
         upsert: false,
       });
 
     if (error) throw error;
 
-    const { data } = supabase.storage.from('media').getPublicUrl(fileName);
+    const { data } = supabase.storage.from('video').getPublicUrl(fileName);
     return data.publicUrl;
   };
 
@@ -131,7 +131,6 @@ export default function PublishScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <ScrollView contentContainerStyle={styles.scrollContent}>
-
         <Text style={[styles.heading, { color: colors.text }]}>
           {t.shareHappiness}
         </Text>
@@ -176,7 +175,6 @@ export default function PublishScreen() {
           <Send size={18} color={colors.background} />
           <Text style={{ color: colors.background }}>{t.publishBtn}</Text>
         </Pressable>
-
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -186,7 +184,6 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   scrollContent: { padding: 20 },
   heading: { fontSize: 22, fontWeight: '700', marginBottom: 20 },
-
   photoArea: {
     borderWidth: 2,
     borderStyle: 'dashed',
@@ -195,25 +192,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 20,
   },
-
   previewWrap: {
     borderRadius: 20,
     overflow: 'hidden',
     marginBottom: 20,
   },
-
   previewImage: {
     width: '100%',
     height: 220,
   },
-
   videoPreview: {
     height: 220,
     backgroundColor: 'black',
     alignItems: 'center',
     justifyContent: 'center',
   },
-
   removeBtn: {
     position: 'absolute',
     top: 10,
@@ -222,7 +215,6 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     padding: 6,
   },
-
   textInput: {
     minHeight: 120,
     borderWidth: 1,
@@ -230,7 +222,6 @@ const styles = StyleSheet.create({
     padding: 12,
     marginBottom: 20,
   },
-
   submitBtn: {
     flexDirection: 'row',
     justifyContent: 'center',
@@ -239,27 +230,22 @@ const styles = StyleSheet.create({
     padding: 16,
     borderRadius: 16,
   },
-
   submitBtnDisabled: { opacity: 0.4 },
-
   confirmContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
   },
-
   confirmCard: {
     padding: 32,
     borderRadius: 24,
     borderWidth: 1,
     alignItems: 'center',
   },
-
   confirmTitle: {
     fontWeight: '700',
     marginVertical: 16,
   },
-
   againButton: {
     padding: 14,
     borderRadius: 12,
