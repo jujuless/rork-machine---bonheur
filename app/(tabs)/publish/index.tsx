@@ -48,7 +48,7 @@ export default function PublishScreen() {
   const pickMedia = useCallback(async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.All,
-      quality: 0.9,
+      quality: 1,
     });
 
     if (!result.canceled && result.assets[0]) {
@@ -62,25 +62,22 @@ export default function PublishScreen() {
 
   const uploadToSupabase = async (uri: string, type: 'image' | 'video') => {
     const response = await fetch(uri);
-    const blob = await response.blob();
+    const arrayBuffer = await response.arrayBuffer();
 
     const ext = type === 'video' ? 'mp4' : 'jpg';
     const fileName = `${Date.now()}.${ext}`;
     const contentType = type === 'video' ? 'video/mp4' : 'image/jpeg';
 
     const { error } = await supabase.storage
-      .from('video') // 👈 bucket = video (minuscule, sans accent)
-      .upload(fileName, blob, {
+      .from('videos') // 👈 BUCKET = videos (avec S)
+      .upload(fileName, arrayBuffer, {
         contentType,
         upsert: false,
       });
 
-    if (error) {
-      console.log('SUPABASE ERROR:', error);
-      throw error;
-    }
+    if (error) throw error;
 
-    const { data } = supabase.storage.from('video').getPublicUrl(fileName);
+    const { data } = supabase.storage.from('videos').getPublicUrl(fileName); // 👈 videos aussi ici
     return data.publicUrl;
   };
 
@@ -106,7 +103,7 @@ export default function PublishScreen() {
       setShowConfirmation(true);
     } catch (e) {
       console.log('UPLOAD ERROR:', e);
-      Alert.alert('Erreur', "Upload impossible (vérifie bucket + policies Supabase)");
+      Alert.alert('Erreur', 'Upload impossible (vérifie bucket + policies Supabase)');
     }
   }, [text, media]);
 
@@ -184,11 +181,7 @@ export default function PublishScreen() {
         />
 
         <Pressable
-          style={[
-            styles.submitBtn,
-            { backgroundColor: colors.primary },
-            !canSubmit && styles.submitBtnDisabled,
-          ]}
+          style={[styles.submitBtn, { backgroundColor: colors.primary }, !canSubmit && styles.submitBtnDisabled]}
           onPress={handleSubmit}
           disabled={!canSubmit}
         >
