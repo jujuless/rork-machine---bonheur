@@ -236,8 +236,8 @@ export const [AppProvider, useApp] = createContextHook(() => {
     setReports(prev => [newReport, ...prev]);
   }, [currentUser.id]);
 
-  const loginModerator = useCallback((username: string, password: string): boolean => {
-    if (username === 'Jules' && password === '123') {
+  const loginModerator = useCallback((_username: string, password: string): boolean => {
+    if (password === 'Modérateur123' || password === 'MAB01') {
       console.log('MAB: Moderator logged in');
       setIsModerator(true);
       return true;

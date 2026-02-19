@@ -1,5 +1,5 @@
 import { Tabs } from 'expo-router';
-import { Home, Film, PlusCircle, User, HelpCircle } from 'lucide-react-native';
+import { Home, Film, PlusCircle, User, HelpCircle, Shield } from 'lucide-react-native';
 import React from 'react';
 import { useApp } from '@/providers/AppProvider';
 
@@ -58,6 +58,13 @@ export default function TabLayout() {
         options={{
           title: t.help,
           tabBarIcon: ({ color, size }) => <HelpCircle size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="moderateur"
+        options={{
+          title: 'Modérateur',
+          tabBarIcon: ({ color, size }) => <Shield size={size} color={color} />,
         }}
       />
     </Tabs>
