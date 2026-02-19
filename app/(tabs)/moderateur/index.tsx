@@ -46,7 +46,7 @@ const ROLE_CONFIG: Record<ModeratorRole, { label: string; color: string; bg: str
   },
 };
 
-type DashTab = 'pending' | 'reports' | 'ai' | 'codes';
+type DashTab = 'pending' | 'reports' | 'ai' | 'codes' | 'create_account';
 
 export default function ModerateurTab() {
   const {
@@ -69,6 +69,7 @@ export default function ModerateurTab() {
   const [newLabel, setNewLabel] = useState('');
   const [newRole, setNewRole] = useState<ModeratorRole>('standard');
   const [createError, setCreateError] = useState('');
+  const [createSuccess, setCreateSuccess] = useState(false);
 
   const handleLogin = useCallback(() => {
     if (!identifier.trim()) {
@@ -145,7 +146,9 @@ export default function ModerateurTab() {
     setNewLabel('');
     setNewRole('standard');
     setCreateError('');
+    setCreateSuccess(true);
     setShowCreateModal(false);
+    setTimeout(() => setCreateSuccess(false), 3000);
   }, [newCode, newLabel, newRole, createModeratorCode]);
 
   const handleDeleteCode = useCallback((item: ModeratorCode) => {
@@ -254,6 +257,7 @@ export default function ModerateurTab() {
     { key: 'reports' as DashTab, label: 'Signalements', count: reports.length, show: !isIaValidator },
     { key: 'ai' as DashTab, label: 'Signalés IA', count: aiFlaggedPublications.length, show: isUltime || isIaValidator },
     { key: 'codes' as DashTab, label: 'Codes', count: moderatorCodes.length, show: isUltime },
+    { key: 'create_account' as DashTab, label: 'Créer un compte', count: 0, show: isUltime },
   ];
   const tabs = allTabs.filter(tab => tab.show);
 
@@ -424,6 +428,124 @@ export default function ModerateurTab() {
                   onReject={handleReject}
                 />
               ))
+            )}
+          </View>
+        )}
+
+        {validActiveTab === 'create_account' && isUltime && (
+          <View style={styles.createAccountSection}>
+            <View style={styles.createAccountHeader}>
+              <View style={[styles.createAccountIconWrap, { backgroundColor: '#2D1506' }]}>
+                <Users size={28} color="#F59E0B" />
+              </View>
+              <Text style={[styles.createAccountTitle, { color: colors.text }]}>Créer un compte modérateur</Text>
+              <Text style={[styles.createAccountSubtitle, { color: colors.textSecondary }]}>
+                Attribuez un accès modération à un collaborateur. Le compte créé pourra consulter les signalements et les publications en attente.
+              </Text>
+            </View>
+
+            {createSuccess && (
+              <View style={[styles.successBanner, { backgroundColor: '#122A1B', borderColor: '#4ADE80' }]}>
+                <Check size={16} color="#4ADE80" />
+                <Text style={[styles.successBannerText, { color: '#4ADE80' }]}>Compte créé avec succès !</Text>
+              </View>
+            )}
+
+            {createError ? (
+              <View style={[styles.errorBanner, { backgroundColor: colors.dangerLight, marginBottom: 4 }]}>
+                <AlertTriangle size={14} color={colors.danger} />
+                <Text style={[styles.errorText, { color: colors.danger }]}>{createError}</Text>
+              </View>
+            ) : null}
+
+            <View style={[styles.createAccountForm, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <Text style={[styles.formFieldLabel, { color: colors.text }]}>Nom du modérateur</Text>
+              <TextInput
+                style={[styles.formInput, { backgroundColor: colors.background, color: colors.text, borderColor: colors.border }]}
+                placeholder="Ex: Sophie, Équipe Alpha..."
+                placeholderTextColor={colors.textMuted}
+                value={newLabel}
+                onChangeText={v => { setNewLabel(v); setCreateError(''); }}
+              />
+
+              <Text style={[styles.formFieldLabel, { color: colors.text }]}>Code d'accès</Text>
+              <TextInput
+                style={[styles.formInput, { backgroundColor: colors.background, color: colors.text, borderColor: colors.border }]}
+                placeholder="Ex: Mod2024, Secure99..."
+                placeholderTextColor={colors.textMuted}
+                value={newCode}
+                onChangeText={v => { setNewCode(v); setCreateError(''); }}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+
+              <Text style={[styles.formFieldLabel, { color: colors.text }]}>Rôle attribué</Text>
+              <View style={styles.roleSelector}>
+                {(['standard', 'ia_validator'] as ModeratorRole[]).map(role => {
+                  const cfg = ROLE_CONFIG[role];
+                  const selected = newRole === role;
+                  return (
+                    <Pressable
+                      key={role}
+                      style={[
+                        styles.roleSelectorItem,
+                        { borderColor: selected ? cfg.color : colors.border, backgroundColor: selected ? cfg.bg : colors.background },
+                      ]}
+                      onPress={() => setNewRole(role)}
+                    >
+                      <View style={styles.roleSelectorRow}>
+                        {selected ? <Check size={14} color={cfg.color} /> : <View style={styles.roleCheckPlaceholder} />}
+                        <Text style={[styles.roleSelectorLabel, { color: selected ? cfg.color : colors.textSecondary }]}>
+                          {cfg.label}
+                        </Text>
+                      </View>
+                      <Text style={[styles.roleSelectorDesc, { color: colors.textMuted }]}>{cfg.desc}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+
+              <Pressable
+                style={[styles.createAccountBtn, { backgroundColor: '#F59E0B' }, (!newCode.trim() || !newLabel.trim()) && { opacity: 0.4 }]}
+                onPress={handleCreateCode}
+                disabled={!newCode.trim() || !newLabel.trim()}
+              >
+                <Plus size={18} color="#000" />
+                <Text style={styles.createAccountBtnText}>Créer le compte</Text>
+              </Pressable>
+            </View>
+
+            {moderatorCodes.length > 0 && (
+              <View style={styles.existingAccountsSection}>
+                <Text style={[styles.existingAccountsTitle, { color: colors.textSecondary }]}>COMPTES CRÉÉS ({moderatorCodes.length})</Text>
+                <View style={[styles.existingAccountsList, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                  {moderatorCodes.map((item: ModeratorCode) => {
+                    const cfg = ROLE_CONFIG[item.role];
+                    return (
+                      <View key={item.id} style={[styles.accountItem, { borderBottomColor: colors.border }]}>
+                        <View style={[styles.accountAvatar, { backgroundColor: cfg.bg }]}>
+                          <Text style={[styles.accountAvatarText, { color: cfg.color }]}>
+                            {item.label.charAt(0).toUpperCase()}
+                          </Text>
+                        </View>
+                        <View style={styles.accountInfo}>
+                          <Text style={[styles.accountName, { color: colors.text }]}>{item.label}</Text>
+                          <View style={[styles.roleTag, { backgroundColor: cfg.bg }]}>
+                            <Text style={[styles.roleTagText, { color: cfg.color }]}>{cfg.label}</Text>
+                          </View>
+                        </View>
+                        <Pressable
+                          style={[styles.deleteCodeBtn, { backgroundColor: colors.dangerLight }]}
+                          onPress={() => handleDeleteCode(item)}
+                          hitSlop={8}
+                        >
+                          <Trash2 size={16} color={colors.danger} />
+                        </Pressable>
+                      </View>
+                    );
+                  })}
+                </View>
+              </View>
             )}
           </View>
         )}
@@ -961,6 +1083,124 @@ const styles = StyleSheet.create({
   },
   bottomSpacer: {
     height: 40,
+  },
+  createAccountSection: {
+    paddingHorizontal: 16,
+    paddingTop: 20,
+  },
+  createAccountHeader: {
+    alignItems: 'center',
+    paddingBottom: 20,
+    gap: 10,
+  },
+  createAccountIconWrap: {
+    width: 64,
+    height: 64,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  createAccountTitle: {
+    fontSize: 20,
+    fontWeight: '700' as const,
+    textAlign: 'center',
+  },
+  createAccountSubtitle: {
+    fontSize: 13,
+    textAlign: 'center',
+    lineHeight: 19,
+    paddingHorizontal: 8,
+  },
+  successBanner: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    marginBottom: 12,
+    borderWidth: 1,
+  },
+  successBannerText: {
+    fontSize: 13,
+    fontWeight: '600' as const,
+  },
+  createAccountForm: {
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 16,
+    gap: 0,
+    marginBottom: 20,
+  },
+  formFieldLabel: {
+    fontSize: 13,
+    fontWeight: '600' as const,
+    marginBottom: 6,
+    marginTop: 14,
+  },
+  formInput: {
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    fontSize: 15,
+    borderWidth: 1,
+  },
+  createAccountBtn: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+    gap: 8,
+    paddingVertical: 15,
+    borderRadius: 14,
+    marginTop: 20,
+  },
+  createAccountBtnText: {
+    fontSize: 15,
+    fontWeight: '700' as const,
+    color: '#000',
+  },
+  existingAccountsSection: {
+    marginBottom: 20,
+  },
+  existingAccountsTitle: {
+    fontSize: 11,
+    fontWeight: '600' as const,
+    letterSpacing: 0.5,
+    marginBottom: 8,
+    paddingHorizontal: 4,
+  },
+  existingAccountsList: {
+    borderRadius: 14,
+    borderWidth: 1,
+    overflow: 'hidden' as const,
+  },
+  accountItem: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+  },
+  accountAvatar: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  accountAvatarText: {
+    fontSize: 16,
+    fontWeight: '700' as const,
+  },
+  accountInfo: {
+    flex: 1,
+    gap: 4,
+  },
+  accountName: {
+    fontSize: 14,
+    fontWeight: '600' as const,
   },
   modalOverlay: {
     flex: 1,
