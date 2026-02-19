@@ -1,7 +1,15 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
-  View, Text, StyleSheet, TextInput, Pressable, ScrollView,
-  Alert, KeyboardAvoidingView, Platform, Animated,
+  View,
+  Text,
+  StyleSheet,
+  TextInput,
+  Pressable,
+  ScrollView,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  Animated,
 } from 'react-native';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
@@ -61,13 +69,16 @@ export default function PublishScreen() {
     const contentType = type === 'video' ? 'video/mp4' : 'image/jpeg';
 
     const { error } = await supabase.storage
-      .from('video') // ✅ BON BUCKET
+      .from('video') // 👈 bucket = video (minuscule, sans accent)
       .upload(fileName, blob, {
         contentType,
         upsert: false,
       });
 
-    if (error) throw error;
+    if (error) {
+      console.log('SUPABASE ERROR:', error);
+      throw error;
+    }
 
     const { data } = supabase.storage.from('video').getPublicUrl(fileName);
     return data.publicUrl;
@@ -80,7 +91,7 @@ export default function PublishScreen() {
     }
 
     try {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
       let mediaUrl: string | undefined;
 
@@ -104,12 +115,17 @@ export default function PublishScreen() {
   if (showConfirmation) {
     return (
       <View style={[styles.confirmContainer, { backgroundColor: colors.background }]}>
-        <Animated.View style={[styles.confirmCard, {
-          backgroundColor: colors.surface,
-          borderColor: colors.border,
-          opacity: confirmFade,
-          transform: [{ scale: confirmScale }],
-        }]}>
+        <Animated.View
+          style={[
+            styles.confirmCard,
+            {
+              backgroundColor: colors.surface,
+              borderColor: colors.border,
+              opacity: confirmFade,
+              transform: [{ scale: confirmScale }],
+            },
+          ]}
+        >
           <CheckCircle size={56} color={colors.success} />
           <Text style={[styles.confirmTitle, { color: colors.text, fontSize: 20 * textScale }]}>
             {t.publicationSent}
@@ -168,7 +184,11 @@ export default function PublishScreen() {
         />
 
         <Pressable
-          style={[styles.submitBtn, { backgroundColor: colors.primary }, !canSubmit && styles.submitBtnDisabled]}
+          style={[
+            styles.submitBtn,
+            { backgroundColor: colors.primary },
+            !canSubmit && styles.submitBtnDisabled,
+          ]}
           onPress={handleSubmit}
           disabled={!canSubmit}
         >
@@ -184,6 +204,7 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   scrollContent: { padding: 20 },
   heading: { fontSize: 22, fontWeight: '700', marginBottom: 20 },
+
   photoArea: {
     borderWidth: 2,
     borderStyle: 'dashed',
@@ -192,21 +213,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 20,
   },
+
   previewWrap: {
     borderRadius: 20,
     overflow: 'hidden',
     marginBottom: 20,
   },
+
   previewImage: {
     width: '100%',
     height: 220,
   },
+
   videoPreview: {
     height: 220,
     backgroundColor: 'black',
     alignItems: 'center',
     justifyContent: 'center',
   },
+
   removeBtn: {
     position: 'absolute',
     top: 10,
@@ -215,6 +240,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     padding: 6,
   },
+
   textInput: {
     minHeight: 120,
     borderWidth: 1,
@@ -222,6 +248,7 @@ const styles = StyleSheet.create({
     padding: 12,
     marginBottom: 20,
   },
+
   submitBtn: {
     flexDirection: 'row',
     justifyContent: 'center',
@@ -230,22 +257,27 @@ const styles = StyleSheet.create({
     padding: 16,
     borderRadius: 16,
   },
+
   submitBtnDisabled: { opacity: 0.4 },
+
   confirmContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
   },
+
   confirmCard: {
     padding: 32,
     borderRadius: 24,
     borderWidth: 1,
     alignItems: 'center',
   },
+
   confirmTitle: {
     fontWeight: '700',
     marginVertical: 16,
   },
+
   againButton: {
     padding: 14,
     borderRadius: 12,
