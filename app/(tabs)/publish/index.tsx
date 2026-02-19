@@ -9,24 +9,26 @@ import * as Haptics from 'expo-haptics';
 import { Send, Camera, CheckCircle, X, Video } from 'lucide-react-native';
 import { createClient } from '@supabase/supabase-js';
 import { useApp } from '@/providers/AppProvider';
-import { INSPIRING_IMAGES_FOR_PUBLISH } from '@/mocks/publications';
 
 const SUPABASE_URL = 'https://bfhtygvwmntcrdjyhdvb.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_j4gif7kSrdaxyPOhW0qsuQ_0EnBNwqU';
+
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 export default function PublishScreen() {
   const { addPublication, colors, t, textScale } = useApp();
+
   const [text, setText] = useState('');
   const [media, setMedia] = useState<{ uri: string; type: 'image' | 'video' } | null>(null);
   const [showConfirmation, setShowConfirmation] = useState(false);
+
   const confirmFade = useRef(new Animated.Value(0)).current;
   const confirmScale = useRef(new Animated.Value(0.9)).current;
 
   useEffect(() => {
     if (showConfirmation) {
       Animated.parallel([
-        Animated.timing(confirmFade, { toValue: 1, duration: 400, useNativeDriver: true }),
+        Animated.timing(confirmFade, { toValue: 1, duration: 300, useNativeDriver: true }),
         Animated.spring(confirmScale, { toValue: 1, friction: 6, useNativeDriver: true }),
       ]).start();
     } else {
@@ -38,7 +40,7 @@ export default function PublishScreen() {
   const pickMedia = useCallback(async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.All,
-      quality: 0.8,
+      quality: 0.9,
     });
 
     if (!result.canceled && result.assets[0]) {
@@ -50,15 +52,20 @@ export default function PublishScreen() {
     }
   }, []);
 
-  const uploadToSupabase = async (uri: string) => {
-    const res = await fetch(uri);
-    const blob = await res.blob();
-    const ext = uri.split('.').pop();
+  const uploadToSupabase = async (uri: string, type: 'image' | 'video') => {
+    const response = await fetch(uri);
+    const arrayBuffer = await response.arrayBuffer();
+
+    const ext = type === 'video' ? 'mp4' : 'jpg';
     const fileName = `${Date.now()}.${ext}`;
+    const contentType = type === 'video' ? 'video/mp4' : 'image/jpeg';
 
     const { error } = await supabase.storage
       .from('media')
-      .upload(fileName, blob, { contentType: blob.type });
+      .upload(fileName, arrayBuffer, {
+        contentType,
+        upsert: false,
+      });
 
     if (error) throw error;
 
@@ -78,7 +85,7 @@ export default function PublishScreen() {
       let mediaUrl: string | undefined;
 
       if (media) {
-        mediaUrl = await uploadToSupabase(media.uri);
+        mediaUrl = await uploadToSupabase(media.uri, media.type);
       }
 
       addPublication(text.trim(), mediaUrl);
@@ -87,8 +94,8 @@ export default function PublishScreen() {
       setMedia(null);
       setShowConfirmation(true);
     } catch (e) {
-      console.log(e);
-      Alert.alert('Erreur', "Upload impossible");
+      console.log('UPLOAD ERROR:', e);
+      Alert.alert('Erreur', "Upload impossible (vérifie bucket + policies Supabase)");
     }
   }, [text, media]);
 
@@ -104,7 +111,7 @@ export default function PublishScreen() {
           transform: [{ scale: confirmScale }],
         }]}>
           <CheckCircle size={56} color={colors.success} />
-          <Text style={[styles.confirmTitle, { color: colors.text }]}>
+          <Text style={[styles.confirmTitle, { color: colors.text, fontSize: 20 * textScale }]}>
             {t.publicationSent}
           </Text>
           <Pressable
@@ -119,9 +126,12 @@ export default function PublishScreen() {
   }
 
   return (
-    <KeyboardAvoidingView style={[styles.container, { backgroundColor: colors.background }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView
+      style={[styles.container, { backgroundColor: colors.background }]}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
       <ScrollView contentContainerStyle={styles.scrollContent}>
+
         <Text style={[styles.heading, { color: colors.text }]}>
           {t.shareHappiness}
         </Text>
@@ -129,7 +139,9 @@ export default function PublishScreen() {
         {!media ? (
           <Pressable style={[styles.photoArea, { borderColor: colors.border }]} onPress={pickMedia}>
             <Camera size={28} color={colors.primary} />
-            <Text style={{ color: colors.primary }}>{t.addPhoto} / Vidéo</Text>
+            <Text style={{ color: colors.primary, marginTop: 8 }}>
+              {t.addPhoto} / Vidéo
+            </Text>
           </Pressable>
         ) : (
           <View style={styles.previewWrap}>
@@ -138,7 +150,7 @@ export default function PublishScreen() {
             ) : (
               <View style={styles.videoPreview}>
                 <Video size={32} color="white" />
-                <Text style={{ color: 'white' }}>Vidéo sélectionnée</Text>
+                <Text style={{ color: 'white', marginTop: 6 }}>Vidéo sélectionnée</Text>
               </View>
             )}
             <Pressable style={styles.removeBtn} onPress={() => setMedia(null)}>
@@ -148,7 +160,7 @@ export default function PublishScreen() {
         )}
 
         <TextInput
-          style={[styles.textInput, { color: colors.text }]}
+          style={[styles.textInput, { color: colors.text, borderColor: colors.border }]}
           placeholder={t.writeMessage}
           placeholderTextColor={colors.textMuted}
           value={text}
@@ -164,6 +176,7 @@ export default function PublishScreen() {
           <Send size={18} color={colors.background} />
           <Text style={{ color: colors.background }}>{t.publishBtn}</Text>
         </Pressable>
+
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -173,6 +186,7 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   scrollContent: { padding: 20 },
   heading: { fontSize: 22, fontWeight: '700', marginBottom: 20 },
+
   photoArea: {
     borderWidth: 2,
     borderStyle: 'dashed',
@@ -181,18 +195,34 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 20,
   },
-  previewWrap: { borderRadius: 20, overflow: 'hidden', marginBottom: 20 },
-  previewImage: { width: '100%', height: 220 },
+
+  previewWrap: {
+    borderRadius: 20,
+    overflow: 'hidden',
+    marginBottom: 20,
+  },
+
+  previewImage: {
+    width: '100%',
+    height: 220,
+  },
+
   videoPreview: {
     height: 220,
     backgroundColor: 'black',
     alignItems: 'center',
     justifyContent: 'center',
   },
+
   removeBtn: {
-    position: 'absolute', top: 10, right: 10,
-    backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 20, padding: 6,
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    borderRadius: 20,
+    padding: 6,
   },
+
   textInput: {
     minHeight: 120,
     borderWidth: 1,
@@ -200,13 +230,38 @@ const styles = StyleSheet.create({
     padding: 12,
     marginBottom: 20,
   },
+
   submitBtn: {
-    flexDirection: 'row', justifyContent: 'center', alignItems: 'center',
-    gap: 8, padding: 16, borderRadius: 16,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 8,
+    padding: 16,
+    borderRadius: 16,
   },
+
   submitBtnDisabled: { opacity: 0.4 },
-  confirmContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  confirmCard: { padding: 32, borderRadius: 24, borderWidth: 1, alignItems: 'center' },
-  confirmTitle: { fontSize: 18, fontWeight: '700', marginVertical: 16 },
-  againButton: { padding: 14, borderRadius: 12 },
+
+  confirmContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  confirmCard: {
+    padding: 32,
+    borderRadius: 24,
+    borderWidth: 1,
+    alignItems: 'center',
+  },
+
+  confirmTitle: {
+    fontWeight: '700',
+    marginVertical: 16,
+  },
+
+  againButton: {
+    padding: 14,
+    borderRadius: 12,
+  },
 });
