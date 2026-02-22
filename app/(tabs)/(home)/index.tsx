@@ -14,9 +14,6 @@ export default function HomeScreen() {
   const router = useRouter()
   const [refreshing, setRefreshing] = useState(false)
 
-  // 👉 AJOUT SUPABASE
-  const [videos, setVideos] = useState<any[]>([])
-
   const fadeAnim = useRef(new Animated.Value(0)).current
   const slideAnim = useRef(new Animated.Value(20)).current
   const breatheAnim = useRef(new Animated.Value(0.5)).current
@@ -40,25 +37,6 @@ export default function HomeScreen() {
     breathing.start()
     return () => breathing.stop()
   }, [breatheAnim])
-
-  // 👉 CHARGEMENT DES VIDÉOS DEPUIS SUPABASE
-  useEffect(() => {
-    const loadVideos = async () => {
-      const { data, error } = await supabase
-        .from('videos')
-        .select('*')
-
-      if (error) {
-        console.error('Erreur Supabase:', error)
-        return
-      }
-
-      console.log('VIDEOS =', data)
-      setVideos(data || [])
-    }
-
-    loadVideos()
-  }, [])
 
   const handleReport = useCallback((id: string) => {
     router.push({ pathname: '/report' as any, params: { publicationId: id } })
@@ -143,11 +121,6 @@ export default function HomeScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      {/* DEBUG SUPABASE */}
-      <Text style={{ color: colors.textSecondary, margin: 12 }}>
-        Vidéos Supabase chargées : {videos.length}
-      </Text>
-
       <FlatList
         data={approvedPublications}
         renderItem={renderItem}

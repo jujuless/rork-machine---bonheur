@@ -37,7 +37,7 @@ export default function HelpScreen() {
           <Heart size={32} color={colors.primary} />
         </View>
         <Text style={[styles.heroTitle, { color: colors.primary, fontSize: 24 * textScale }]}>
-          Machine à Bonheur
+          Seranova
         </Text>
         <Text style={[styles.heroSub, { color: colors.textSecondary, fontSize: 13 * textScale }]}>
           {t.aboutText.substring(0, 80)}...

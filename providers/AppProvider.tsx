@@ -1,18 +1,18 @@
 import createContextHook from '@nkzw/create-context-hook';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Publication, Report, ReportReason, User, AppSettings, ReactionType, ColorTheme, ModeratorRole, ModeratorCode } from '@/types';
+import { Publication, Report, ReportReason, User, AppSettings, ReactionType, ColorTheme, ModeratorRole, ModeratorCode, AIAnalysisResult, AIGrade } from '@/types';
 import { DarkColors, LightColors } from '@/constants/colors';
 import { translations, TranslationStrings } from '@/constants/translations';
 import { MOCK_PUBLICATIONS } from '@/mocks/publications';
 
 const STORAGE_KEYS = {
-  publications: 'mab_publications',
-  reports: 'mab_reports',
-  settings: 'mab_settings',
-  profile: 'mab_profile',
-  reactions: 'mab_reactions',
-  moderatorCodes: 'mab_moderator_codes',
+  publications: 'seranova_publications',
+  reports: 'seranova_reports',
+  settings: 'seranova_settings',
+  profile: 'seranova_profile',
+  reactions: 'seranova_reactions',
+  moderatorCodes: 'seranova_moderator_codes',
 } as const;
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -31,6 +31,57 @@ const BUILTIN_CODES: Record<string, ModeratorRole> = {
   'Modérateur123': 'ultime',
   'MAB01': 'standard',
 };
+
+function generateAIAnalysis(text: string, hasMedia: boolean, isVideo: boolean): AIAnalysisResult {
+  const textLength = text.trim().length;
+  const hookPresent = text.includes('?') || textLength > 60 || /^[A-Z]/.test(text.trim());
+  const ctaPresent = text.includes('!') || /partage|commente|dis-moi|réponds|clique/i.test(text);
+
+  const base = 35;
+  const textBonus = Math.min(textLength / 4, 22);
+  const mediaBonus = hasMedia ? 14 : 0;
+  const videoBonus = isVideo ? 12 : 0;
+  const hookBonus = hookPresent ? 10 : 0;
+  const ctaBonus = ctaPresent ? 7 : 0;
+
+  const rawScore = base + textBonus + mediaBonus + videoBonus + hookBonus + ctaBonus;
+  const score = Math.min(Math.round(rawScore), 100);
+
+  let grade: AIGrade;
+  if (score >= 80) grade = 'excellent';
+  else if (score >= 60) grade = 'good';
+  else if (score >= 40) grade = 'average';
+  else grade = 'poor';
+
+  const clarity = Math.min(10, Math.round(2 + textLength / 25));
+  const structure = Math.min(10, Math.round((hasMedia ? 5 : 3) + (isVideo ? 3 : 1) + (hookPresent ? 1 : 0) + (ctaPresent ? 1 : 0)));
+  const estimatedRetention = Math.round(25 + score * 0.55);
+
+  const feedbacks: string[] = [];
+  if (!hookPresent) feedbacks.push('Commencez par une question ou une affirmation forte pour capter l\'attention');
+  if (!ctaPresent) feedbacks.push('Ajoutez un appel à l\'action pour encourager l\'engagement');
+  if (textLength < 40) feedbacks.push('Développez votre message — plus de contexte = plus d\'impact');
+  if (!hasMedia) feedbacks.push('Une image ou vidéo augmente la rétention de 3×');
+  if (isVideo && score < 60) feedbacks.push('Soignez les 3 premières secondes de votre vidéo (hook visuel)');
+  if (score >= 75) feedbacks.push('Excellent travail ! Ce contenu a un fort potentiel d\'engagement.');
+  if (feedbacks.length === 0) feedbacks.push('Bon contenu. Peaufinez le hook pour atteindre l\'excellence.');
+
+  return {
+    id: `ai-${Date.now()}`,
+    publicationId: '',
+    score,
+    grade,
+    hook: hookPresent,
+    clarity,
+    structure,
+    callToAction: ctaPresent,
+    estimatedRetention,
+    feedbacks,
+    analyzedAt: new Date().toISOString(),
+  };
+}
+
+export { generateAIAnalysis };
 
 export const [AppProvider, useApp] = createContextHook(() => {
   const [publications, setPublications] = useState<Publication[]>([]);
@@ -70,6 +121,8 @@ export const [AppProvider, useApp] = createContextHook(() => {
     bio: userProfile.bio,
     avatarUrl: userProfile.avatarUrl,
     isModerator: false,
+    role: 'user',
+    plan: 'free',
   }), [userProfile]);
 
   useEffect(() => {
@@ -91,27 +144,13 @@ export const [AppProvider, useApp] = createContextHook(() => {
           setPublications(MOCK_PUBLICATIONS);
         }
 
-        if (storedReports) {
-          setReports(JSON.parse(storedReports) as Report[]);
-        }
-
-        if (storedSettings) {
-          setSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(storedSettings) });
-        }
-
-        if (storedProfile) {
-          setUserProfile({ ...DEFAULT_PROFILE, ...JSON.parse(storedProfile) });
-        }
-
-        if (storedReactions) {
-          setReactions(JSON.parse(storedReactions));
-        }
-
-        if (storedModCodes) {
-          setModeratorCodes(JSON.parse(storedModCodes) as ModeratorCode[]);
-        }
+        if (storedReports) setReports(JSON.parse(storedReports) as Report[]);
+        if (storedSettings) setSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(storedSettings) });
+        if (storedProfile) setUserProfile({ ...DEFAULT_PROFILE, ...JSON.parse(storedProfile) });
+        if (storedReactions) setReactions(JSON.parse(storedReactions));
+        if (storedModCodes) setModeratorCodes(JSON.parse(storedModCodes) as ModeratorCode[]);
       } catch (error) {
-        console.log('MAB: Error loading data:', error);
+        console.log('Seranova: Error loading data:', error);
         setPublications(MOCK_PUBLICATIONS);
       } finally {
         isInitialLoad.current = false;
@@ -124,42 +163,42 @@ export const [AppProvider, useApp] = createContextHook(() => {
   useEffect(() => {
     if (!isInitialLoad.current && isLoaded) {
       AsyncStorage.setItem(STORAGE_KEYS.publications, JSON.stringify(publications))
-        .catch(err => console.log('MAB: Error saving publications:', err));
+        .catch(err => console.log('Seranova: Error saving publications:', err));
     }
   }, [publications, isLoaded]);
 
   useEffect(() => {
     if (!isInitialLoad.current && isLoaded) {
       AsyncStorage.setItem(STORAGE_KEYS.reports, JSON.stringify(reports))
-        .catch(err => console.log('MAB: Error saving reports:', err));
+        .catch(err => console.log('Seranova: Error saving reports:', err));
     }
   }, [reports, isLoaded]);
 
   useEffect(() => {
     if (!isInitialLoad.current && isLoaded) {
       AsyncStorage.setItem(STORAGE_KEYS.settings, JSON.stringify(settings))
-        .catch(err => console.log('MAB: Error saving settings:', err));
+        .catch(err => console.log('Seranova: Error saving settings:', err));
     }
   }, [settings, isLoaded]);
 
   useEffect(() => {
     if (!isInitialLoad.current && isLoaded) {
       AsyncStorage.setItem(STORAGE_KEYS.profile, JSON.stringify(userProfile))
-        .catch(err => console.log('MAB: Error saving profile:', err));
+        .catch(err => console.log('Seranova: Error saving profile:', err));
     }
   }, [userProfile, isLoaded]);
 
   useEffect(() => {
     if (!isInitialLoad.current && isLoaded) {
       AsyncStorage.setItem(STORAGE_KEYS.reactions, JSON.stringify(reactions))
-        .catch(err => console.log('MAB: Error saving reactions:', err));
+        .catch(err => console.log('Seranova: Error saving reactions:', err));
     }
   }, [reactions, isLoaded]);
 
   useEffect(() => {
     if (!isInitialLoad.current && isLoaded) {
       AsyncStorage.setItem(STORAGE_KEYS.moderatorCodes, JSON.stringify(moderatorCodes))
-        .catch(err => console.log('MAB: Error saving moderator codes:', err));
+        .catch(err => console.log('Seranova: Error saving moderator codes:', err));
     }
   }, [moderatorCodes, isLoaded]);
 
@@ -211,22 +250,24 @@ export const [AppProvider, useApp] = createContextHook(() => {
     [pendingPublications, aiReportedIds]
   );
 
-  const addPublication = useCallback((text: string, imageUrl?: string) => {
+  const addPublication = useCallback((text: string, mediaUrl?: string, isVideo?: boolean, aiAnalysis?: AIAnalysisResult) => {
     const newPub: Publication = {
       id: `pub-${Date.now()}`,
       authorId: currentUser.id,
       authorName: currentUser.name,
       text,
-      imageUrl: imageUrl || undefined,
+      imageUrl: !isVideo ? mediaUrl : undefined,
+      videoUrl: isVideo ? mediaUrl : undefined,
       status: 'pending',
       createdAt: new Date().toISOString(),
+      aiAnalysis,
     };
-    console.log('MAB: Adding publication:', newPub.id);
+    console.log('Seranova: Adding publication:', newPub.id, 'AI score:', aiAnalysis?.score);
     setPublications(prev => [newPub, ...prev]);
   }, [currentUser.id, currentUser.name]);
 
   const editPublication = useCallback((id: string, text: string, imageUrl?: string) => {
-    console.log('MAB: Editing publication:', id);
+    console.log('Seranova: Editing publication:', id);
     setPublications(prev => prev.map(p =>
       p.id === id && p.authorId === currentUser.id
         ? { ...p, text, imageUrl: imageUrl || p.imageUrl, status: 'pending' as const }
@@ -235,7 +276,7 @@ export const [AppProvider, useApp] = createContextHook(() => {
   }, [currentUser.id]);
 
   const deletePublication = useCallback((id: string) => {
-    console.log('MAB: Deleting publication:', id);
+    console.log('Seranova: Deleting publication:', id);
     setPublications(prev => prev.filter(p =>
       !(p.id === id && p.authorId === currentUser.id)
     ));
@@ -243,14 +284,14 @@ export const [AppProvider, useApp] = createContextHook(() => {
 
   const moderatorDeletePublication = useCallback((id: string) => {
     if (!isModerator) return;
-    console.log('MAB: Moderator deleting publication:', id);
+    console.log('Seranova: Moderator deleting publication:', id);
     setPublications(prev => prev.filter(p => p.id !== id));
     setReports(prev => prev.filter(r => r.publicationId !== id));
   }, [isModerator]);
 
   const approvePublication = useCallback((id: string) => {
     if (!isModerator) return;
-    console.log('MAB: Approving publication:', id);
+    console.log('Seranova: Approving publication:', id);
     setPublications(prev => prev.map(p =>
       p.id === id ? { ...p, status: 'approved' as const } : p
     ));
@@ -258,7 +299,7 @@ export const [AppProvider, useApp] = createContextHook(() => {
 
   const rejectPublication = useCallback((id: string) => {
     if (!isModerator) return;
-    console.log('MAB: Rejecting publication:', id);
+    console.log('Seranova: Rejecting publication:', id);
     setPublications(prev => prev.map(p =>
       p.id === id ? { ...p, status: 'rejected' as const } : p
     ));
@@ -274,31 +315,31 @@ export const [AppProvider, useApp] = createContextHook(() => {
       createdAt: new Date().toISOString(),
       status: 'pending',
     };
-    console.log('MAB: Reporting publication:', publicationId);
+    console.log('Seranova: Reporting publication:', publicationId);
     setReports(prev => [newReport, ...prev]);
   }, [currentUser.id]);
 
   const loginModerator = useCallback((_username: string, password: string): boolean => {
     const builtinRole = BUILTIN_CODES[password];
     if (builtinRole) {
-      console.log('MAB: Moderator logged in with role:', builtinRole);
+      console.log('Seranova: Moderator logged in with role:', builtinRole);
       setIsModerator(true);
       setModeratorRole(builtinRole);
       return true;
     }
     const dynCode = moderatorCodes.find(c => c.code === password);
     if (dynCode) {
-      console.log('MAB: Moderator logged in with dynamic code, role:', dynCode.role);
+      console.log('Seranova: Moderator logged in with dynamic code, role:', dynCode.role);
       setIsModerator(true);
       setModeratorRole(dynCode.role);
       return true;
     }
-    console.log('MAB: Moderator login failed');
+    console.log('Seranova: Moderator login failed');
     return false;
   }, [moderatorCodes]);
 
   const logoutModerator = useCallback(() => {
-    console.log('MAB: Moderator logged out');
+    console.log('Seranova: Moderator logged out');
     setIsModerator(false);
     setModeratorRole(null);
   }, []);
@@ -310,7 +351,7 @@ export const [AppProvider, useApp] = createContextHook(() => {
       ...moderatorCodes.map(c => c.code),
     ];
     if (allExisting.includes(code)) {
-      console.log('MAB: Code already exists');
+      console.log('Seranova: Code already exists');
       return false;
     }
     const newCode: ModeratorCode = {
@@ -320,19 +361,19 @@ export const [AppProvider, useApp] = createContextHook(() => {
       label,
       createdAt: new Date().toISOString(),
     };
-    console.log('MAB: Creating moderator code:', newCode.id, role);
+    console.log('Seranova: Creating moderator code:', newCode.id, role);
     setModeratorCodes(prev => [...prev, newCode]);
     return true;
   }, [moderatorRole, moderatorCodes]);
 
   const deleteModeratorCode = useCallback((id: string) => {
     if (moderatorRole !== 'ultime') return;
-    console.log('MAB: Deleting moderator code:', id);
+    console.log('Seranova: Deleting moderator code:', id);
     setModeratorCodes(prev => prev.filter(c => c.id !== id));
   }, [moderatorRole]);
 
   const resetData = useCallback(async () => {
-    console.log('MAB: Resetting all data');
+    console.log('Seranova: Resetting all data');
     setPublications(MOCK_PUBLICATIONS);
     setReports([]);
     setReactions({});
@@ -344,12 +385,12 @@ export const [AppProvider, useApp] = createContextHook(() => {
   }, []);
 
   const updateSettings = useCallback((partial: Partial<AppSettings>) => {
-    console.log('MAB: Settings updated:', partial);
+    console.log('Seranova: Settings updated:', partial);
     setSettings(prev => ({ ...prev, ...partial }));
   }, []);
 
   const updateProfile = useCallback((updates: { name?: string; bio?: string; avatarUrl?: string }) => {
-    console.log('MAB: Profile updated');
+    console.log('Seranova: Profile updated');
     setUserProfile(prev => ({ ...prev, ...updates }));
   }, []);
 

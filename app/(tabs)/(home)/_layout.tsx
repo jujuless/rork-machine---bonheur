@@ -8,7 +8,7 @@ function HeaderTitle() {
   return (
     <View style={styles.headerTitle}>
       <Image source={require('@/assets/images/logo.png')} style={styles.headerLogo} />
-      <Text style={[styles.headerText, { color: colors.primary }]}>Machine à Bonheur</Text>
+      <Text style={[styles.headerText, { color: colors.primary }]}>Seranova</Text>
     </View>
   );
 }

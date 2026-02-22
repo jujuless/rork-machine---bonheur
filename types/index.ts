@@ -4,6 +4,8 @@ export interface User {
   bio: string;
   avatarUrl?: string;
   isModerator: boolean;
+  role?: UserRole;
+  plan?: UserPlan;
 }
 
 export interface Publication {
@@ -15,6 +17,7 @@ export interface Publication {
   videoUrl?: string;
   status: 'pending' | 'approved' | 'rejected';
   createdAt: string;
+  aiAnalysis?: AIAnalysisResult;
 }
 
 export interface Report {
@@ -31,6 +34,8 @@ export type ReportReason = 'fake_news' | 'insults' | 'nudity' | 'ai_content' | '
 export type PublicationStatus = Publication['status'];
 export type ReactionType = 'seedling' | 'smile' | 'heart';
 export type ModeratorRole = 'ultime' | 'standard' | 'ia_validator';
+export type UserRole = 'user' | 'admin' | 'super_admin';
+export type UserPlan = 'free' | 'pro' | 'team';
 
 export interface ModeratorCode {
   id: string;
@@ -71,6 +76,58 @@ export interface InspiringQuote {
   text: string;
   author: string;
 }
+
+export type AIGrade = 'excellent' | 'good' | 'average' | 'poor';
+
+export interface AIAnalysisResult {
+  id: string;
+  publicationId: string;
+  score: number;
+  grade: AIGrade;
+  hook: boolean;
+  clarity: number;
+  structure: number;
+  callToAction: boolean;
+  estimatedRetention: number;
+  feedbacks: string[];
+  analyzedAt: string;
+}
+
+export interface MABScore {
+  clarity: number;
+  action: number;
+  progression: number;
+  meaning: number;
+  overall: number;
+}
+
+export interface FeatureFlags {
+  maxVideosAnalyzable: number;
+  deepFeedback: boolean;
+  adminDashboard: boolean;
+  createModeratorAccounts: boolean;
+}
+
+export const PLAN_FLAGS: Record<UserPlan, FeatureFlags> = {
+  free: {
+    maxVideosAnalyzable: 3,
+    deepFeedback: false,
+    adminDashboard: false,
+    createModeratorAccounts: false,
+  },
+  pro: {
+    maxVideosAnalyzable: 30,
+    deepFeedback: true,
+    adminDashboard: true,
+    createModeratorAccounts: false,
+  },
+  team: {
+    maxVideosAnalyzable: -1,
+    deepFeedback: true,
+    adminDashboard: true,
+    createModeratorAccounts: true,
+  },
+};
 
 export interface ColorTheme {
   primary: string;
