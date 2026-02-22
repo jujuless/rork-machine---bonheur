@@ -1,7 +1,11 @@
 import createContextHook from '@nkzw/create-context-hook';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Publication, Report, ReportReason, User, AppSettings, ReactionType, ColorTheme, ModeratorRole, ModeratorCode, AIAnalysisResult, AIGrade } from '@/types';
+import {
+  Publication, Report, ReportReason, User, AppSettings, ReactionType, ColorTheme,
+  ModeratorRole, ModeratorAccount, ModeratorPermission, ModerationTask, ModerationLog,
+  AIAnalysisResult, AIGrade,
+} from '@/types';
 import { DarkColors, LightColors } from '@/constants/colors';
 import { translations, TranslationStrings } from '@/constants/translations';
 import { MOCK_PUBLICATIONS } from '@/mocks/publications';
@@ -14,7 +18,9 @@ const STORAGE_KEYS = {
   settings: 'seranova_settings',
   profile: 'seranova_profile',
   reactions: 'seranova_reactions',
-  moderatorCodes: 'seranova_moderator_codes',
+  moderatorAccounts: 'seranova_moderator_accounts_v2',
+  moderationTasks: 'seranova_moderation_tasks',
+  moderationLogs: 'seranova_moderation_logs',
 } as const;
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -29,10 +35,34 @@ const DEFAULT_PROFILE = {
   avatarUrl: undefined as string | undefined,
 };
 
-const BUILTIN_CODES: Record<string, ModeratorRole> = {
-  'Modérateur123': 'ultime',
-  'MAB01': 'standard',
-};
+// Built-in accounts — never stored, always present
+// SQL: these are seeded rows in moderator_accounts with is_builtin = TRUE
+export const BUILTIN_ACCOUNTS: ModeratorAccount[] = [
+  {
+    id: 'builtin-ultime',
+    identifier: 'moderateur123',
+    code: 'Modérateur123',
+    role: 'ultime',
+    permissions: ['view', 'approve', 'reject', 'comment'],
+    label: '"Modérateur Ultime"',
+    createdBy: 'system',
+    createdAt: '2024-01-01T00:00:00.000Z',
+    isRevoked: false,
+    isBuiltin: true,
+  },
+  {
+    id: 'builtin-standard',
+    identifier: 'mab01',
+    code: 'MAB01',
+    role: 'standard',
+    permissions: ['view', 'approve', 'reject', 'comment'],
+    label: 'Modérateur',
+    createdBy: 'system',
+    createdAt: '2024-01-01T00:00:00.000Z',
+    isRevoked: false,
+    isBuiltin: true,
+  },
+];
 
 export function generateAIAnalysis(text: string, hasMedia: boolean, _isVideo: boolean): AIAnalysisResult {
   const textAnalysis = containsBannedContent(text);
@@ -96,7 +126,12 @@ export const [AppProvider, useApp] = createContextHook(() => {
   const [reports, setReports] = useState<Report[]>([]);
   const [isModerator, setIsModerator] = useState(false);
   const [moderatorRole, setModeratorRole] = useState<ModeratorRole | null>(null);
-  const [moderatorCodes, setModeratorCodes] = useState<ModeratorCode[]>([]);
+  const [currentModeratorId, setCurrentModeratorId] = useState<string>('');
+  const [currentModeratorLabel, setCurrentModeratorLabel] = useState<string>('');
+  const [currentModeratorPermissions, setCurrentModeratorPermissions] = useState<ModeratorPermission[]>([]);
+  const [moderatorAccounts, setModeratorAccounts] = useState<ModeratorAccount[]>([]);
+  const [moderationTasks, setModerationTasks] = useState<ModerationTask[]>([]);
+  const [moderationLogs, setModerationLogs] = useState<ModerationLog[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
   const isInitialLoad = useRef(true);
 
@@ -133,16 +168,27 @@ export const [AppProvider, useApp] = createContextHook(() => {
     plan: 'free',
   }), [userProfile]);
 
+  // All accounts = builtin + dynamic
+  const allModeratorAccounts = useMemo(
+    () => [...BUILTIN_ACCOUNTS, ...moderatorAccounts],
+    [moderatorAccounts]
+  );
+
   useEffect(() => {
     const loadData = async () => {
       try {
-        const [storedPubs, storedReports, storedSettings, storedProfile, storedReactions, storedModCodes] = await Promise.all([
+        const [
+          storedPubs, storedReports, storedSettings, storedProfile,
+          storedReactions, storedAccounts, storedTasks, storedLogs,
+        ] = await Promise.all([
           AsyncStorage.getItem(STORAGE_KEYS.publications),
           AsyncStorage.getItem(STORAGE_KEYS.reports),
           AsyncStorage.getItem(STORAGE_KEYS.settings),
           AsyncStorage.getItem(STORAGE_KEYS.profile),
           AsyncStorage.getItem(STORAGE_KEYS.reactions),
-          AsyncStorage.getItem(STORAGE_KEYS.moderatorCodes),
+          AsyncStorage.getItem(STORAGE_KEYS.moderatorAccounts),
+          AsyncStorage.getItem(STORAGE_KEYS.moderationTasks),
+          AsyncStorage.getItem(STORAGE_KEYS.moderationLogs),
         ]);
 
         if (storedPubs) {
@@ -156,7 +202,9 @@ export const [AppProvider, useApp] = createContextHook(() => {
         if (storedSettings) setSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(storedSettings) });
         if (storedProfile) setUserProfile({ ...DEFAULT_PROFILE, ...JSON.parse(storedProfile) });
         if (storedReactions) setReactions(JSON.parse(storedReactions));
-        if (storedModCodes) setModeratorCodes(JSON.parse(storedModCodes) as ModeratorCode[]);
+        if (storedAccounts) setModeratorAccounts(JSON.parse(storedAccounts) as ModeratorAccount[]);
+        if (storedTasks) setModerationTasks(JSON.parse(storedTasks) as ModerationTask[]);
+        if (storedLogs) setModerationLogs(JSON.parse(storedLogs) as ModerationLog[]);
       } catch (error) {
         console.log('Seranova: Error loading data:', error);
         setPublications(MOCK_PUBLICATIONS);
@@ -205,10 +253,24 @@ export const [AppProvider, useApp] = createContextHook(() => {
 
   useEffect(() => {
     if (!isInitialLoad.current && isLoaded) {
-      AsyncStorage.setItem(STORAGE_KEYS.moderatorCodes, JSON.stringify(moderatorCodes))
-        .catch(err => console.log('Seranova: Error saving moderator codes:', err));
+      AsyncStorage.setItem(STORAGE_KEYS.moderatorAccounts, JSON.stringify(moderatorAccounts))
+        .catch(err => console.log('Seranova: Error saving moderator accounts:', err));
     }
-  }, [moderatorCodes, isLoaded]);
+  }, [moderatorAccounts, isLoaded]);
+
+  useEffect(() => {
+    if (!isInitialLoad.current && isLoaded) {
+      AsyncStorage.setItem(STORAGE_KEYS.moderationTasks, JSON.stringify(moderationTasks))
+        .catch(err => console.log('Seranova: Error saving moderation tasks:', err));
+    }
+  }, [moderationTasks, isLoaded]);
+
+  useEffect(() => {
+    if (!isInitialLoad.current && isLoaded) {
+      AsyncStorage.setItem(STORAGE_KEYS.moderationLogs, JSON.stringify(moderationLogs))
+        .catch(err => console.log('Seranova: Error saving moderation logs:', err));
+    }
+  }, [moderationLogs, isLoaded]);
 
   const approvedPublications = useMemo(
     () => publications
@@ -264,6 +326,35 @@ export const [AppProvider, useApp] = createContextHook(() => {
     [pendingPublications, aiReportedIds]
   );
 
+  // Tasks assigned to the currently logged-in moderator
+  const myAssignedTasks = useMemo(
+    () => moderationTasks
+      .filter(t => t.assignedTo === currentModeratorId && t.status === 'pending')
+      .sort((a, b) => new Date(b.assignedAt).getTime() - new Date(a.assignedAt).getTime()),
+    [moderationTasks, currentModeratorId]
+  );
+
+  // Helper: add a log entry
+  const addLog = useCallback((
+    action: ModerationLog['action'],
+    publicationId: string,
+    detail: string,
+    modId: string,
+    modLabel: string,
+  ) => {
+    const entry: ModerationLog = {
+      id: `log-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      moderatorId: modId,
+      moderatorLabel: modLabel,
+      publicationId,
+      action,
+      detail,
+      timestamp: new Date().toISOString(),
+    };
+    console.log('Seranova: ModerationLog:', action, detail);
+    setModerationLogs(prev => [entry, ...prev]);
+  }, []);
+
   const addPublication = useCallback((text: string, mediaUrl?: string, isVideo?: boolean, aiAnalysis?: AIAnalysisResult) => {
     const isBlocked = aiAnalysis && aiAnalysis.recommendation === 'block';
     const newPub: Publication = {
@@ -314,25 +405,29 @@ export const [AppProvider, useApp] = createContextHook(() => {
   const moderatorDeletePublication = useCallback((id: string) => {
     if (!isModerator) return;
     console.log('Seranova: Moderator deleting publication:', id);
+    addLog('rejected', id, 'Publication supprimée par le modérateur', currentModeratorId, currentModeratorLabel);
     setPublications(prev => prev.filter(p => p.id !== id));
     setReports(prev => prev.filter(r => r.publicationId !== id));
-  }, [isModerator]);
+    setModerationTasks(prev => prev.filter(t => t.publicationId !== id));
+  }, [isModerator, addLog, currentModeratorId, currentModeratorLabel]);
 
   const approvePublication = useCallback((id: string) => {
     if (!isModerator) return;
     console.log('Seranova: Approving publication:', id);
+    addLog('approved', id, 'Publication approuvée', currentModeratorId, currentModeratorLabel);
     setPublications(prev => prev.map(p =>
       p.id === id ? { ...p, status: 'approved' as const } : p
     ));
-  }, [isModerator]);
+  }, [isModerator, addLog, currentModeratorId, currentModeratorLabel]);
 
   const rejectPublication = useCallback((id: string) => {
     if (!isModerator) return;
     console.log('Seranova: Rejecting publication:', id);
+    addLog('rejected', id, 'Publication refusée', currentModeratorId, currentModeratorLabel);
     setPublications(prev => prev.map(p =>
       p.id === id ? { ...p, status: 'rejected' as const } : p
     ));
-  }, [isModerator]);
+  }, [isModerator, addLog, currentModeratorId, currentModeratorLabel]);
 
   const reportPublication = useCallback((publicationId: string, reason: ReportReason, description: string) => {
     const newReport: Report = {
@@ -348,58 +443,161 @@ export const [AppProvider, useApp] = createContextHook(() => {
     setReports(prev => [newReport, ...prev]);
   }, [currentUser.id]);
 
-  const loginModerator = useCallback((_username: string, password: string): boolean => {
-    const builtinRole = BUILTIN_CODES[password];
-    if (builtinRole) {
-      console.log('Seranova: Moderator logged in with role:', builtinRole);
+  // Login: check builtin accounts first, then dynamic accounts
+  // SQL equivalent: SELECT * FROM moderator_accounts WHERE identifier = ? AND code = ? AND is_revoked = FALSE LIMIT 1
+  const loginModerator = useCallback((identifier: string, code: string): boolean => {
+    const normalizedId = identifier.toLowerCase().trim();
+    const allAccounts = [...BUILTIN_ACCOUNTS, ...moderatorAccounts];
+    const account = allAccounts.find(
+      a => a.identifier.toLowerCase() === normalizedId && a.code === code && !a.isRevoked
+    );
+    if (account) {
+      console.log('Seranova: Moderator logged in — id:', account.id, 'role:', account.role);
       setIsModerator(true);
-      setModeratorRole(builtinRole);
+      setModeratorRole(account.role);
+      setCurrentModeratorId(account.id);
+      setCurrentModeratorLabel(account.label);
+      setCurrentModeratorPermissions(account.permissions);
       return true;
     }
-    const dynCode = moderatorCodes.find(c => c.code === password);
-    if (dynCode) {
-      console.log('Seranova: Moderator logged in with dynamic code, role:', dynCode.role);
-      setIsModerator(true);
-      setModeratorRole(dynCode.role);
-      return true;
-    }
-    console.log('Seranova: Moderator login failed');
+    console.log('Seranova: Moderator login failed for identifier:', normalizedId);
     return false;
-  }, [moderatorCodes]);
+  }, [moderatorAccounts]);
 
   const logoutModerator = useCallback(() => {
     console.log('Seranova: Moderator logged out');
     setIsModerator(false);
     setModeratorRole(null);
+    setCurrentModeratorId('');
+    setCurrentModeratorLabel('');
+    setCurrentModeratorPermissions([]);
   }, []);
 
-  const createModeratorCode = useCallback((code: string, role: ModeratorRole, label: string): boolean => {
-    if (moderatorRole !== 'ultime') return false;
-    const allExisting = [
-      ...Object.keys(BUILTIN_CODES),
-      ...moderatorCodes.map(c => c.code),
-    ];
-    if (allExisting.includes(code)) {
-      console.log('Seranova: Code already exists');
-      return false;
-    }
-    const newCode: ModeratorCode = {
-      id: `modcode-${Date.now()}`,
-      code,
-      role,
-      label,
-      createdAt: new Date().toISOString(),
-    };
-    console.log('Seranova: Creating moderator code:', newCode.id, role);
-    setModeratorCodes(prev => [...prev, newCode]);
-    return true;
-  }, [moderatorRole, moderatorCodes]);
+  // Create a new moderator account (only ultime can do this)
+  // SQL: INSERT INTO moderator_accounts (...)
+  const createModeratorAccount = useCallback((params: {
+    identifier: string;
+    code: string;
+    role: ModeratorRole;
+    permissions: ModeratorPermission[];
+    label: string;
+  }): { ok: boolean; error?: string } => {
+    if (moderatorRole !== 'ultime') return { ok: false, error: 'Permission refusée' };
 
-  const deleteModeratorCode = useCallback((id: string) => {
+    const allAccounts = [...BUILTIN_ACCOUNTS, ...moderatorAccounts];
+    const idLower = params.identifier.toLowerCase().trim();
+
+    if (!idLower) return { ok: false, error: 'L\'identifiant est requis' };
+    if (params.code.length < 4) return { ok: false, error: 'Le code doit faire au moins 4 caractères' };
+    if (!params.label.trim()) return { ok: false, error: 'Le nom est requis' };
+
+    if (allAccounts.some(a => a.identifier.toLowerCase() === idLower)) {
+      return { ok: false, error: 'Cet identifiant existe déjà' };
+    }
+
+    const newAccount: ModeratorAccount = {
+      id: `mod-${Date.now()}`,
+      identifier: idLower,
+      code: params.code,
+      role: params.role,
+      permissions: params.permissions,
+      label: params.label.trim(),
+      createdBy: currentModeratorId,
+      createdAt: new Date().toISOString(),
+      isRevoked: false,
+      isBuiltin: false,
+    };
+
+    console.log('Seranova: Creating moderator account:', newAccount.id, newAccount.role);
+    setModeratorAccounts(prev => [...prev, newAccount]);
+    addLog('account_created', '', `Compte créé : "${newAccount.label}" (${newAccount.identifier}) — rôle: ${newAccount.role}`, currentModeratorId, currentModeratorLabel);
+    return { ok: true };
+  }, [moderatorRole, moderatorAccounts, currentModeratorId, currentModeratorLabel, addLog]);
+
+  // Revoke a moderator account (only ultime can do this)
+  // SQL: UPDATE moderator_accounts SET is_revoked = TRUE WHERE id = ?
+  const revokeModeratorAccess = useCallback((accountId: string) => {
     if (moderatorRole !== 'ultime') return;
-    console.log('Seranova: Deleting moderator code:', id);
-    setModeratorCodes(prev => prev.filter(c => c.id !== id));
+    const account = moderatorAccounts.find(a => a.id === accountId);
+    if (!account) return;
+    console.log('Seranova: Revoking moderator account:', accountId);
+    setModeratorAccounts(prev => prev.map(a =>
+      a.id === accountId ? { ...a, isRevoked: true } : a
+    ));
+    addLog('account_revoked', '', `Accès révoqué : "${account.label}" (${account.identifier})`, currentModeratorId, currentModeratorLabel);
+  }, [moderatorRole, moderatorAccounts, addLog, currentModeratorId, currentModeratorLabel]);
+
+  // Permanently delete a moderator account
+  const deleteModeratorAccount = useCallback((accountId: string) => {
+    if (moderatorRole !== 'ultime') return;
+    console.log('Seranova: Deleting moderator account:', accountId);
+    setModeratorAccounts(prev => prev.filter(a => a.id !== accountId));
+    setModerationTasks(prev => prev.filter(t => t.assignedTo !== accountId));
   }, [moderatorRole]);
+
+  // Assign a publication to a moderator
+  // SQL: INSERT INTO moderation_tasks (publication_id, assigned_to, assigned_by, ...)
+  const assignPublicationToModerator = useCallback((publicationId: string, targetAccountId: string): boolean => {
+    if (moderatorRole !== 'ultime') return false;
+    const allAccounts = [...BUILTIN_ACCOUNTS, ...moderatorAccounts];
+    const target = allAccounts.find(a => a.id === targetAccountId);
+    if (!target || target.isRevoked) return false;
+
+    // Prevent duplicate active assignment for same pub + moderator
+    const existing = moderationTasks.find(
+      t => t.publicationId === publicationId && t.assignedTo === targetAccountId && t.status === 'pending'
+    );
+    if (existing) return false;
+
+    const task: ModerationTask = {
+      id: `task-${Date.now()}`,
+      publicationId,
+      assignedTo: targetAccountId,
+      assignedToLabel: target.label,
+      assignedBy: currentModeratorId,
+      assignedByLabel: currentModeratorLabel,
+      status: 'pending',
+      decision: null,
+      comment: '',
+      assignedAt: new Date().toISOString(),
+      decidedAt: null,
+    };
+
+    console.log('Seranova: Assigning pub', publicationId, 'to', target.label);
+    setModerationTasks(prev => [task, ...prev]);
+    addLog('assigned', publicationId, `Assigné à "${target.label}" (${target.identifier})`, currentModeratorId, currentModeratorLabel);
+    return true;
+  }, [moderatorRole, moderatorAccounts, moderationTasks, currentModeratorId, currentModeratorLabel, addLog]);
+
+  // Submit a moderation decision on an assigned task
+  // SQL: UPDATE moderation_tasks SET status='done', decision=?, decided_at=? WHERE id=?
+  // SQL: UPDATE publications SET status=? WHERE id=?
+  const submitModerationDecision = useCallback((
+    taskId: string,
+    decision: 'approved' | 'rejected',
+    comment: string = '',
+  ) => {
+    if (!isModerator) return;
+    const task = moderationTasks.find(t => t.id === taskId);
+    if (!task) return;
+
+    console.log('Seranova: Task decision:', taskId, decision);
+    setModerationTasks(prev => prev.map(t =>
+      t.id === taskId
+        ? { ...t, status: 'done' as const, decision, comment, decidedAt: new Date().toISOString() }
+        : t
+    ));
+    setPublications(prev => prev.map(p =>
+      p.id === task.publicationId ? { ...p, status: decision === 'approved' ? 'approved' as const : 'rejected' as const } : p
+    ));
+    addLog(
+      decision,
+      task.publicationId,
+      comment ? `Décision: ${decision === 'approved' ? 'approuvé' : 'refusé'} — "${comment}"` : `Décision: ${decision === 'approved' ? 'approuvé' : 'refusé'}`,
+      currentModeratorId,
+      currentModeratorLabel,
+    );
+  }, [isModerator, moderationTasks, addLog, currentModeratorId, currentModeratorLabel]);
 
   const resetData = useCallback(async () => {
     console.log('Seranova: Resetting all data');
@@ -451,7 +649,14 @@ export const [AppProvider, useApp] = createContextHook(() => {
     reports,
     isModerator,
     moderatorRole,
-    moderatorCodes,
+    currentModeratorId,
+    currentModeratorLabel,
+    currentModeratorPermissions,
+    allModeratorAccounts,
+    moderatorAccounts,
+    moderationTasks,
+    myAssignedTasks,
+    moderationLogs,
     isLoaded,
     addPublication,
     editPublication,
@@ -462,8 +667,11 @@ export const [AppProvider, useApp] = createContextHook(() => {
     reportPublication,
     loginModerator,
     logoutModerator,
-    createModeratorCode,
-    deleteModeratorCode,
+    createModeratorAccount,
+    revokeModeratorAccess,
+    deleteModeratorAccount,
+    assignPublicationToModerator,
+    submitModerationDecision,
     resetData,
     settings,
     updateSettings,
