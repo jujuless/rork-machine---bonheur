@@ -2,10 +2,12 @@ import React, { useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TextInput, Pressable, Alert, ScrollView, Modal,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   Shield, LogOut, Clock, AlertTriangle, Eye, EyeOff, Leaf,
-  Crown, Bot, Plus, Trash2, Key, Users, ChevronRight, X, Check,
+  Crown, Bot, Plus, Trash2, Key, Users, X, Check,
+  ZoomIn, ExternalLink, ShieldAlert, ShieldCheck, ShieldOff,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { useApp } from '@/providers/AppProvider';
@@ -13,12 +15,14 @@ import { PublicationCard } from '@/components/PublicationCard';
 import { EmptyState } from '@/components/EmptyState';
 import { Publication, Report, ModeratorRole, ModeratorCode } from '@/types';
 import { timeAgo } from '@/utils/timeAgo';
+import { CATEGORY_LABELS, DANGER_LEVEL_CONFIG } from '@/utils/contentFilter';
+import type { ToxicityCategory } from '@/utils/contentFilter';
 
 const REASON_LABELS: Record<string, string> = {
   fake_news: 'Fake News / Désinformation',
   insults: 'Insultes / Harcèlement',
   nudity: 'Nudité / Contenu explicite',
-  ai_content: 'Contenu généré par IA',
+  ai_content: 'Signalé par l\'IA',
   other: 'Autre',
 };
 
@@ -46,6 +50,13 @@ const ROLE_CONFIG: Record<ModeratorRole, { label: string; color: string; bg: str
   },
 };
 
+const STATUS_CONFIG = {
+  pending: { label: 'En attente', color: '#FBBF24', bg: '#231A04', Icon: Clock },
+  approved: { label: 'Approuvé', color: '#4ADE80', bg: '#052E16', Icon: ShieldCheck },
+  rejected: { label: 'Refusé', color: '#EF4444', bg: '#2A0808', Icon: ShieldOff },
+  reported: { label: 'Signalé', color: '#FB923C', bg: '#2A1000', Icon: ShieldAlert },
+};
+
 type DashTab = 'pending' | 'reports' | 'ai' | 'codes' | 'create_account';
 
 export default function ModerateurTab() {
@@ -70,6 +81,7 @@ export default function ModerateurTab() {
   const [newRole, setNewRole] = useState<ModeratorRole>('standard');
   const [createError, setCreateError] = useState('');
   const [createSuccess, setCreateSuccess] = useState(false);
+  const [zoomedImage, setZoomedImage] = useState<string | null>(null);
 
   const handleLogin = useCallback(() => {
     if (!identifier.trim()) {
@@ -255,14 +267,13 @@ export default function ModerateurTab() {
   const allTabs: { key: DashTab; label: string; count: number; show: boolean }[] = [
     { key: 'pending' as DashTab, label: 'En attente', count: isIaValidator ? aiValidatedPublications.length : pendingPublications.length, show: true },
     { key: 'reports' as DashTab, label: 'Signalements', count: reports.length, show: !isIaValidator },
-    { key: 'ai' as DashTab, label: 'Signalés IA', count: aiFlaggedPublications.length, show: isUltime || isIaValidator },
+    { key: 'ai' as DashTab, label: 'Toxicité IA', count: aiFlaggedPublications.length, show: isUltime || isIaValidator },
     { key: 'codes' as DashTab, label: 'Codes', count: moderatorCodes.length, show: isUltime },
     { key: 'create_account' as DashTab, label: 'Créer un compte', count: 0, show: isUltime },
   ];
   const tabs = allTabs.filter(tab => tab.show);
 
-  const validActiveTab = tabs.find(t => t.key === activeTab) ? activeTab : tabs[0]?.key ?? 'pending';
-
+  const validActiveTab = tabs.find(tb => tb.key === activeTab) ? activeTab : tabs[0]?.key ?? 'pending';
   const pendingList = isIaValidator ? aiValidatedPublications : pendingPublications;
 
   return (
@@ -317,6 +328,8 @@ export default function ModerateurTab() {
       </ScrollView>
 
       <ScrollView showsVerticalScrollIndicator={false} style={styles.dashScroll}>
+
+        {/* ── EN ATTENTE ─────────────────────────────── */}
         {validActiveTab === 'pending' && (
           <View>
             <Text style={[styles.sectionTitle, { color: colors.text }]}>
@@ -326,7 +339,7 @@ export default function ModerateurTab() {
               <View style={[styles.infoBanner, { backgroundColor: '#1E1B4B', borderColor: '#4338CA' }]}>
                 <Bot size={14} color="#818CF8" />
                 <Text style={[styles.infoBannerText, { color: '#818CF8' }]}>
-                  Ces publications ont été pré-approuvées par l'IA et n'ont aucun signalement actif.
+                  Ces publications n'ont aucun contenu toxique détecté par l'IA.
                 </Text>
               </View>
             )}
@@ -352,6 +365,7 @@ export default function ModerateurTab() {
           </View>
         )}
 
+        {/* ── SIGNALEMENTS ───────────────────────────── */}
         {validActiveTab === 'reports' && (
           <View>
             <Text style={[styles.sectionTitle, { color: colors.text }]}>Signalements</Text>
@@ -364,6 +378,11 @@ export default function ModerateurTab() {
             ) : (
               reports.map((report: Report) => {
                 const reportedPub = publications.find(p => p.id === report.publicationId);
+                const pubStatus = reportedPub?.status ?? 'pending';
+                const statusCfg = STATUS_CONFIG[pubStatus] ?? STATUS_CONFIG.pending;
+                const aiScore = reportedPub?.aiAnalysis?.score;
+                const aiCategories = reportedPub?.aiAnalysis?.categories ?? [];
+
                 return (
                   <View key={report.id} style={[styles.reportCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
                     <View style={styles.reportHeader}>
@@ -375,24 +394,117 @@ export default function ModerateurTab() {
                       </Text>
                       <Text style={[styles.reportTime, { color: colors.textMuted }]}>{timeAgo(report.createdAt)}</Text>
                     </View>
+
                     {report.description ? (
                       <Text style={[styles.reportDesc, { color: colors.textSecondary }]}>{report.description}</Text>
                     ) : null}
+
                     {reportedPub ? (
-                      <Text style={[styles.reportPubPreview, { color: colors.textSecondary }]} numberOfLines={2}>
-                        {reportedPub.text}
+                      <View style={styles.reportPubSection}>
+                        <View style={styles.reportPubStatusRow}>
+                          <View style={[styles.statusChip, { backgroundColor: statusCfg.bg }]}>
+                            <statusCfg.Icon size={11} color={statusCfg.color} />
+                            <Text style={[styles.statusChipText, { color: statusCfg.color }]}>{statusCfg.label}</Text>
+                          </View>
+                          {aiScore !== undefined && (
+                            <View style={[styles.aiScoreChip, {
+                              backgroundColor: aiScore >= 70 ? '#3A0000' : aiScore >= 45 ? '#2A1000' : aiScore >= 20 ? '#231A04' : '#052E16',
+                            }]}>
+                              <Bot size={11} color={aiScore >= 70 ? '#EF4444' : aiScore >= 45 ? '#FB923C' : aiScore >= 20 ? '#FBBF24' : '#4ADE80'} />
+                              <Text style={[styles.aiScoreChipText, {
+                                color: aiScore >= 70 ? '#EF4444' : aiScore >= 45 ? '#FB923C' : aiScore >= 20 ? '#FBBF24' : '#4ADE80',
+                              }]}>
+                                Nocivité {aiScore}/100
+                              </Text>
+                            </View>
+                          )}
+                        </View>
+
+                        {aiCategories.length > 0 && (
+                          <View style={styles.categoryRow}>
+                            {aiCategories.map((cat: ToxicityCategory) => {
+                              const catCfg = CATEGORY_LABELS[cat];
+                              return (
+                                <View key={cat} style={[styles.categoryChip, { backgroundColor: catCfg.bg }]}>
+                                  <Text style={[styles.categoryChipText, { color: catCfg.color }]}>{catCfg.label}</Text>
+                                </View>
+                              );
+                            })}
+                          </View>
+                        )}
+
+                        {reportedPub.text ? (
+                          <Text style={[styles.reportPubPreview, { color: colors.textSecondary }]} numberOfLines={2}>
+                            {reportedPub.text}
+                          </Text>
+                        ) : null}
+
+                        {reportedPub.imageUrl ? (
+                          <View style={styles.reportImageContainer}>
+                            <Pressable
+                              style={[styles.reportImageWrap, { borderColor: colors.border }]}
+                              onPress={() => {
+                                setZoomedImage(reportedPub.imageUrl!);
+                                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                              }}
+                            >
+                              <Image
+                                source={{ uri: reportedPub.imageUrl }}
+                                style={styles.reportImage}
+                                contentFit="cover"
+                                transition={200}
+                              />
+                              <View style={styles.reportImageOverlay}>
+                                <ZoomIn size={20} color="#fff" />
+                              </View>
+                            </Pressable>
+                            <View style={[styles.imageSourceRow, { backgroundColor: colors.surfaceLight }]}>
+                              <ExternalLink size={11} color={colors.textMuted} />
+                              <Text style={[styles.imageSourceText, { color: colors.textMuted }]} numberOfLines={1}>
+                                {reportedPub.imageUrl.slice(0, 48)}…
+                              </Text>
+                            </View>
+                          </View>
+                        ) : null}
+                      </View>
+                    ) : (
+                      <Text style={[styles.reportPubPreview, { color: colors.textMuted, fontStyle: 'italic' }]}>
+                        Publication introuvable (supprimée)
                       </Text>
-                    ) : null}
+                    )}
+
                     <View style={styles.reportActions}>
                       <Text style={[styles.reportPubId, { color: colors.textMuted }]}>ID: {report.publicationId.slice(-8)}</Text>
-                      <Pressable
-                        style={[styles.deleteReportBtn, { backgroundColor: colors.dangerLight }]}
-                        onPress={() => handleDeleteReportedPost(report.publicationId)}
-                        hitSlop={8}
-                      >
-                        <Trash2 size={14} color={colors.danger} />
-                        <Text style={[styles.deleteReportBtnText, { color: colors.danger }]}>Supprimer</Text>
-                      </Pressable>
+                      <View style={styles.reportActionBtns}>
+                        {reportedPub && reportedPub.status === 'pending' && (
+                          <>
+                            <Pressable
+                              style={[styles.approveBtn, { backgroundColor: colors.successLight }]}
+                              onPress={() => handleApprove(report.publicationId)}
+                              hitSlop={8}
+                            >
+                              <Check size={13} color={colors.success} />
+                              <Text style={[styles.approveBtnText, { color: colors.success }]}>Approuver</Text>
+                            </Pressable>
+                            <Pressable
+                              style={[styles.rejectBtn, { backgroundColor: colors.dangerLight }]}
+                              onPress={() => handleReject(report.publicationId)}
+                              hitSlop={8}
+                            >
+                              <X size={13} color={colors.danger} />
+                              <Text style={[styles.rejectBtnText, { color: colors.danger }]}>Refuser</Text>
+                            </Pressable>
+                          </>
+                        )}
+                        <Pressable
+                          style={[styles.deleteReportBtn, { backgroundColor: '#3A0000' }]}
+                          onPress={() => handleDeleteReportedPost(report.publicationId)}
+                          hitSlop={8}
+                        >
+                          <Trash2 size={14} color="#EF4444" />
+                          <Text style={[styles.deleteReportBtnText, { color: '#EF4444' }]}>Supprimer</Text>
+                        </Pressable>
+                      </View>
                     </View>
                   </View>
                 );
@@ -401,37 +513,69 @@ export default function ModerateurTab() {
           </View>
         )}
 
+        {/* ── TOXICITÉ IA ────────────────────────────── */}
         {validActiveTab === 'ai' && (
           <View>
-            <Text style={[styles.sectionTitle, { color: colors.text }]}>Signalés par l'IA</Text>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Contenus toxiques détectés</Text>
             <View style={[styles.infoBanner, { backgroundColor: '#2D1B4E', borderColor: '#7C3AED' }]}>
               <Bot size={14} color="#A78BFA" />
               <Text style={[styles.infoBannerText, { color: '#A78BFA' }]}>
-                Ces contenus ont été automatiquement détectés comme potentiellement générés par IA.
+                Ces contenus ont un score de nocivité ≥ 40/100. Ils nécessitent une révision manuelle.
               </Text>
             </View>
             {aiFlaggedPublications.length === 0 ? (
               <EmptyState
                 icon={<Bot size={40} color={colors.textMuted} />}
-                title="Aucun contenu signalé IA"
-                message="L'IA n'a détecté aucun contenu suspect pour le moment."
+                title="Aucun contenu toxique"
+                message="L'IA n'a détecté aucun contenu problématique pour le moment."
               />
             ) : (
-              aiFlaggedPublications.map((pub: Publication) => (
-                <PublicationCard
-                  key={pub.id}
-                  publication={pub}
-                  showStatus
-                  showModeratorActions
-                  showReportButton={false}
-                  onApprove={handleApprove}
-                  onReject={handleReject}
-                />
-              ))
+              aiFlaggedPublications.map((pub: Publication) => {
+                const dangerCfg = pub.aiAnalysis
+                  ? DANGER_LEVEL_CONFIG[pub.aiAnalysis.dangerLevel]
+                  : null;
+                return (
+                  <View key={pub.id}>
+                    {dangerCfg && pub.aiAnalysis && (
+                      <View style={[styles.toxicityBanner, { backgroundColor: dangerCfg.bg, borderColor: dangerCfg.color + '50' }]}>
+                        <View style={styles.toxicityBannerLeft}>
+                          <Text style={[styles.toxicityScore, { color: dangerCfg.color }]}>
+                            {pub.aiAnalysis.score}/100
+                          </Text>
+                          <View style={[styles.toxicityLevelChip, { backgroundColor: dangerCfg.color + '20' }]}>
+                            <Text style={[styles.toxicityLevelText, { color: dangerCfg.color }]}>
+                              Niveau {dangerCfg.label}
+                            </Text>
+                          </View>
+                        </View>
+                        <View style={styles.toxicityCats}>
+                          {pub.aiAnalysis.categories.map((cat: ToxicityCategory) => {
+                            const catCfg = CATEGORY_LABELS[cat];
+                            return (
+                              <View key={cat} style={[styles.categoryChip, { backgroundColor: catCfg.bg }]}>
+                                <Text style={[styles.categoryChipText, { color: catCfg.color }]}>{catCfg.label}</Text>
+                              </View>
+                            );
+                          })}
+                        </View>
+                      </View>
+                    )}
+                    <PublicationCard
+                      publication={pub}
+                      showStatus
+                      showModeratorActions
+                      showReportButton={false}
+                      onApprove={handleApprove}
+                      onReject={handleReject}
+                    />
+                  </View>
+                );
+              })
             )}
           </View>
         )}
 
+        {/* ── CRÉER COMPTE ───────────────────────────── */}
         {validActiveTab === 'create_account' && isUltime && (
           <View style={styles.createAccountSection}>
             <View style={styles.createAccountHeader}>
@@ -550,6 +694,7 @@ export default function ModerateurTab() {
           </View>
         )}
 
+        {/* ── CODES ──────────────────────────────────── */}
         {validActiveTab === 'codes' && isUltime && (
           <View>
             <View style={styles.codesHeader}>
@@ -632,6 +777,35 @@ export default function ModerateurTab() {
         <View style={styles.bottomSpacer} />
       </ScrollView>
 
+      {/* ── IMAGE ZOOM MODAL ───────────────────────── */}
+      <Modal
+        visible={!!zoomedImage}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setZoomedImage(null)}
+      >
+        <Pressable style={styles.zoomOverlay} onPress={() => setZoomedImage(null)}>
+          <View style={styles.zoomHeader}>
+            <View style={styles.zoomTitleRow}>
+              <ShieldAlert size={16} color="#EF4444" />
+              <Text style={styles.zoomTitle}>Image signalée</Text>
+            </View>
+            <Pressable style={styles.zoomCloseBtn} onPress={() => setZoomedImage(null)}>
+              <X size={22} color="#fff" />
+            </Pressable>
+          </View>
+          {zoomedImage ? (
+            <Image
+              source={{ uri: zoomedImage }}
+              style={styles.zoomedImage}
+              contentFit="contain"
+            />
+          ) : null}
+          <Text style={styles.zoomHint}>Appuyez n'importe où pour fermer</Text>
+        </Pressable>
+      </Modal>
+
+      {/* ── CREATE CODE MODAL ─────────────────────── */}
       <Modal
         visible={showCreateModal}
         transparent
@@ -716,9 +890,7 @@ export default function ModerateurTab() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
+  container: { flex: 1 },
   loginContainer: {
     flex: 1,
     justifyContent: 'center',
@@ -765,48 +937,25 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(239,68,68,0.2)',
   },
-  errorText: {
-    fontSize: 13,
-    fontWeight: '500' as const,
-    flex: 1,
-  },
-  inputGroup: {
-    marginBottom: 20,
-  },
-  inputLabel: {
-    fontSize: 13,
-    fontWeight: '600' as const,
-    marginBottom: 6,
-  },
+  errorText: { fontSize: 13, fontWeight: '500' as const, flex: 1 },
+  inputGroup: { marginBottom: 20 },
+  inputLabel: { fontSize: 13, fontWeight: '600' as const, marginBottom: 6 },
   passwordWrap: {
     flexDirection: 'row',
     alignItems: 'center',
     borderRadius: 12,
     borderWidth: 1,
   },
-  passwordInput: {
-    flex: 1,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    fontSize: 15,
-  },
-  eyeBtn: {
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-  },
+  passwordInput: { flex: 1, paddingVertical: 14, paddingHorizontal: 16, fontSize: 15 },
+  eyeBtn: { paddingHorizontal: 14, paddingVertical: 14 },
   loginBtn: {
     paddingVertical: 16,
     borderRadius: 14,
     alignItems: 'center',
     marginTop: 4,
   },
-  loginBtnDisabled: {
-    opacity: 0.4,
-  },
-  loginBtnText: {
-    fontSize: 16,
-    fontWeight: '700' as const,
-  },
+  loginBtnDisabled: { opacity: 0.4 },
+  loginBtnText: { fontSize: 16, fontWeight: '700' as const },
   dashHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -815,10 +964,7 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderBottomWidth: 1,
   },
-  dashHeaderLeft: {
-    gap: 6,
-    flex: 1,
-  },
+  dashHeaderLeft: { gap: 6, flex: 1 },
   roleBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -828,13 +974,8 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
     borderRadius: 20,
   },
-  roleBadgeText: {
-    fontSize: 13,
-    fontWeight: '700' as const,
-  },
-  dashSub: {
-    fontSize: 12,
-  },
+  roleBadgeText: { fontSize: 13, fontWeight: '700' as const },
+  dashSub: { fontSize: 12 },
   logoutBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -845,17 +986,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(239,68,68,0.2)',
   },
-  logoutText: {
-    fontSize: 12,
-    fontWeight: '600' as const,
-  },
-  tabBar: {
-    borderBottomWidth: 1,
-    flexGrow: 0,
-  },
-  tabBarContent: {
-    paddingHorizontal: 16,
-  },
+  logoutText: { fontSize: 12, fontWeight: '600' as const },
+  tabBar: { borderBottomWidth: 1, flexGrow: 0 },
+  tabBarContent: { paddingHorizontal: 16 },
   tabBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -864,10 +997,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
     marginRight: 20,
   },
-  tabLabel: {
-    fontSize: 13,
-    fontWeight: '600' as const,
-  },
+  tabLabel: { fontSize: 13, fontWeight: '600' as const },
   tabCount: {
     minWidth: 20,
     height: 20,
@@ -876,13 +1006,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 6,
   },
-  tabCountText: {
-    fontSize: 11,
-    fontWeight: '700' as const,
-  },
-  dashScroll: {
-    flex: 1,
-  },
+  tabCountText: { fontSize: 11, fontWeight: '700' as const },
+  dashScroll: { flex: 1 },
   sectionTitle: {
     fontSize: 17,
     fontWeight: '700' as const,
@@ -901,11 +1026,8 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     borderWidth: 1,
   },
-  infoBannerText: {
-    fontSize: 12,
-    lineHeight: 18,
-    flex: 1,
-  },
+  infoBannerText: { fontSize: 12, lineHeight: 18, flex: 1 },
+
   reportCard: {
     marginHorizontal: 16,
     marginVertical: 5,
@@ -928,49 +1050,156 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  reportReason: {
-    fontSize: 13,
-    fontWeight: '600' as const,
-    flex: 1,
-  },
-  reportTime: {
-    fontSize: 11,
-  },
+  reportReason: { fontSize: 13, fontWeight: '600' as const, flex: 1 },
+  reportTime: { fontSize: 11 },
   reportDesc: {
-    fontSize: 12,
-    lineHeight: 17,
-    marginBottom: 6,
-    marginLeft: 34,
-  },
-  reportPubId: {
-    fontSize: 10,
-  },
-  reportPubPreview: {
     fontSize: 12,
     lineHeight: 17,
     marginBottom: 8,
     marginLeft: 34,
+  },
+  reportPubSection: { marginLeft: 34, gap: 6 },
+  reportPubStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  statusChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  statusChipText: { fontSize: 11, fontWeight: '600' as const },
+  aiScoreChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  aiScoreChipText: { fontSize: 11, fontWeight: '700' as const },
+  categoryRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 5,
+  },
+  categoryChip: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 5,
+  },
+  categoryChipText: { fontSize: 10, fontWeight: '600' as const },
+  reportPubPreview: {
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: 4,
     fontStyle: 'italic' as const,
   },
+  reportImageContainer: { gap: 5, marginTop: 4 },
+  reportImageWrap: {
+    borderRadius: 10,
+    overflow: 'hidden',
+    borderWidth: 1,
+    position: 'relative',
+  },
+  reportImage: {
+    width: '100%',
+    height: 160,
+  },
+  reportImageOverlay: {
+    position: 'absolute',
+    bottom: 8,
+    right: 8,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    borderRadius: 8,
+    padding: 6,
+  },
+  imageSourceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 6,
+  },
+  imageSourceText: { fontSize: 10, flex: 1 },
   reportActions: {
     flexDirection: 'row' as const,
     alignItems: 'center' as const,
     justifyContent: 'space-between' as const,
     marginLeft: 34,
-    marginTop: 4,
+    marginTop: 10,
   },
+  reportActionBtns: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 6,
+  },
+  approveBtn: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  approveBtnText: { fontSize: 11, fontWeight: '600' as const },
+  rejectBtn: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  rejectBtnText: { fontSize: 11, fontWeight: '600' as const },
   deleteReportBtn: {
     flexDirection: 'row' as const,
     alignItems: 'center' as const,
     gap: 5,
-    paddingHorizontal: 12,
+    paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 8,
   },
-  deleteReportBtnText: {
-    fontSize: 12,
-    fontWeight: '600' as const,
+  deleteReportBtnText: { fontSize: 11, fontWeight: '600' as const },
+  reportPubId: { fontSize: 10 },
+
+  toxicityBanner: {
+    marginHorizontal: 16,
+    marginBottom: -2,
+    marginTop: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
   },
+  toxicityBannerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  toxicityScore: { fontSize: 16, fontWeight: '800' as const },
+  toxicityLevelChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  toxicityLevelText: { fontSize: 11, fontWeight: '600' as const },
+  toxicityCats: {
+    flex: 1,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
+  },
+
   codesHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -987,11 +1216,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 10,
   },
-  createCodeBtnText: {
-    color: '#000',
-    fontWeight: '700' as const,
-    fontSize: 13,
-  },
+  createCodeBtnText: { color: '#000', fontWeight: '700' as const, fontSize: 13 },
   builtinSection: {
     marginHorizontal: 16,
     borderRadius: 14,
@@ -1004,7 +1229,7 @@ const styles = StyleSheet.create({
     fontWeight: '600' as const,
     paddingHorizontal: 16,
     paddingVertical: 10,
-    textTransform: 'uppercase',
+    textTransform: 'uppercase' as const,
     letterSpacing: 0.5,
   },
   codeItem: {
@@ -1022,36 +1247,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  codeInfo: {
-    flex: 1,
-    gap: 4,
-  },
-  codeName: {
-    fontSize: 14,
-    fontWeight: '600' as const,
-  },
+  codeInfo: { flex: 1, gap: 4 },
+  codeName: { fontSize: 14, fontWeight: '600' as const },
   roleTag: {
     alignSelf: 'flex-start',
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 6,
   },
-  roleTagText: {
-    fontSize: 11,
-    fontWeight: '600' as const,
-  },
-  codeDate: {
-    fontSize: 11,
-  },
-  lockBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
-  lockBadgeText: {
-    fontSize: 11,
-    fontWeight: '500' as const,
-  },
+  roleTagText: { fontSize: 11, fontWeight: '600' as const },
+  codeDate: { fontSize: 11 },
+  lockBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
+  lockBadgeText: { fontSize: 11, fontWeight: '500' as const },
   deleteCodeBtn: {
     width: 34,
     height: 34,
@@ -1072,27 +1279,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 32,
     gap: 10,
   },
-  emptyCodesTitle: {
-    fontSize: 15,
-    fontWeight: '600' as const,
-  },
-  emptyCodesDesc: {
-    fontSize: 13,
-    textAlign: 'center',
-    lineHeight: 19,
-  },
-  bottomSpacer: {
-    height: 40,
-  },
-  createAccountSection: {
-    paddingHorizontal: 16,
-    paddingTop: 20,
-  },
-  createAccountHeader: {
-    alignItems: 'center',
-    paddingBottom: 20,
-    gap: 10,
-  },
+  emptyCodesTitle: { fontSize: 15, fontWeight: '600' as const },
+  emptyCodesDesc: { fontSize: 13, textAlign: 'center', lineHeight: 19 },
+  bottomSpacer: { height: 40 },
+
+  createAccountSection: { paddingHorizontal: 16, paddingTop: 20 },
+  createAccountHeader: { alignItems: 'center', paddingBottom: 20, gap: 10 },
   createAccountIconWrap: {
     width: 64,
     height: 64,
@@ -1101,17 +1293,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 4,
   },
-  createAccountTitle: {
-    fontSize: 20,
-    fontWeight: '700' as const,
-    textAlign: 'center',
-  },
-  createAccountSubtitle: {
-    fontSize: 13,
-    textAlign: 'center',
-    lineHeight: 19,
-    paddingHorizontal: 8,
-  },
+  createAccountTitle: { fontSize: 20, fontWeight: '700' as const, textAlign: 'center' },
+  createAccountSubtitle: { fontSize: 13, textAlign: 'center', lineHeight: 19, paddingHorizontal: 8 },
   successBanner: {
     flexDirection: 'row' as const,
     alignItems: 'center' as const,
@@ -1122,10 +1305,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     borderWidth: 1,
   },
-  successBannerText: {
-    fontSize: 13,
-    fontWeight: '600' as const,
-  },
+  successBannerText: { fontSize: 13, fontWeight: '600' as const },
   createAccountForm: {
     borderRadius: 16,
     borderWidth: 1,
@@ -1133,12 +1313,7 @@ const styles = StyleSheet.create({
     gap: 0,
     marginBottom: 20,
   },
-  formFieldLabel: {
-    fontSize: 13,
-    fontWeight: '600' as const,
-    marginBottom: 6,
-    marginTop: 14,
-  },
+  formFieldLabel: { fontSize: 13, fontWeight: '600' as const, marginBottom: 6, marginTop: 14 },
   formInput: {
     borderRadius: 12,
     paddingVertical: 12,
@@ -1155,14 +1330,8 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     marginTop: 20,
   },
-  createAccountBtnText: {
-    fontSize: 15,
-    fontWeight: '700' as const,
-    color: '#000',
-  },
-  existingAccountsSection: {
-    marginBottom: 20,
-  },
+  createAccountBtnText: { fontSize: 15, fontWeight: '700' as const, color: '#000' },
+  existingAccountsSection: { marginBottom: 20 },
   existingAccountsTitle: {
     fontSize: 11,
     fontWeight: '600' as const,
@@ -1190,18 +1359,57 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  accountAvatarText: {
-    fontSize: 16,
+  accountAvatarText: { fontSize: 16, fontWeight: '700' as const },
+  accountInfo: { flex: 1, gap: 4 },
+  accountName: { fontSize: 14, fontWeight: '600' as const },
+
+  zoomOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.95)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  zoomHeader: {
+    position: 'absolute',
+    top: 56,
+    left: 20,
+    right: 20,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    zIndex: 10,
+  },
+  zoomTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  zoomTitle: {
+    color: '#EF4444',
+    fontSize: 14,
     fontWeight: '700' as const,
   },
-  accountInfo: {
-    flex: 1,
-    gap: 4,
+  zoomCloseBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  accountName: {
-    fontSize: 14,
-    fontWeight: '600' as const,
+  zoomedImage: {
+    width: '100%',
+    height: '75%',
+    borderRadius: 12,
   },
+  zoomHint: {
+    position: 'absolute',
+    bottom: 48,
+    color: 'rgba(255,255,255,0.4)',
+    fontSize: 12,
+  },
+
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.7)',
@@ -1230,16 +1438,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: 20,
   },
-  modalTitle: {
-    fontSize: 17,
-    fontWeight: '700' as const,
-  },
-  modalLabel: {
-    fontSize: 13,
-    fontWeight: '600' as const,
-    marginBottom: 6,
-    marginTop: 14,
-  },
+  modalTitle: { fontSize: 17, fontWeight: '700' as const },
+  modalLabel: { fontSize: 13, fontWeight: '600' as const, marginBottom: 6, marginTop: 14 },
   modalInput: {
     borderRadius: 12,
     paddingVertical: 12,
@@ -1247,34 +1447,17 @@ const styles = StyleSheet.create({
     fontSize: 15,
     borderWidth: 1,
   },
-  roleSelector: {
-    gap: 8,
-    marginTop: 4,
-  },
+  roleSelector: { gap: 8, marginTop: 4 },
   roleSelectorItem: {
     borderRadius: 12,
-    borderWidth: 1.5,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
+    borderWidth: 1,
+    padding: 12,
+    gap: 4,
   },
-  roleSelectorRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 2,
-  },
-  roleCheckPlaceholder: {
-    width: 14,
-    height: 14,
-  },
-  roleSelectorLabel: {
-    fontSize: 14,
-    fontWeight: '600' as const,
-  },
-  roleSelectorDesc: {
-    fontSize: 12,
-    marginLeft: 22,
-  },
+  roleSelectorRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  roleCheckPlaceholder: { width: 14, height: 14 },
+  roleSelectorLabel: { fontSize: 14, fontWeight: '600' as const },
+  roleSelectorDesc: { fontSize: 12 },
   createConfirmBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1284,9 +1467,5 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     marginTop: 20,
   },
-  createConfirmBtnText: {
-    fontSize: 15,
-    fontWeight: '700' as const,
-    color: '#000',
-  },
+  createConfirmBtnText: { fontSize: 15, fontWeight: '700' as const, color: '#000' },
 });

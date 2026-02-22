@@ -5,6 +5,8 @@ import { Publication, Report, ReportReason, User, AppSettings, ReactionType, Col
 import { DarkColors, LightColors } from '@/constants/colors';
 import { translations, TranslationStrings } from '@/constants/translations';
 import { MOCK_PUBLICATIONS } from '@/mocks/publications';
+import { containsBannedContent, buildSafetyFeedbacks, analyzeImageSafety } from '@/utils/contentFilter';
+import type { DangerLevel, ToxicityCategory } from '@/utils/contentFilter';
 
 const STORAGE_KEYS = {
   publications: 'seranova_publications',
@@ -32,56 +34,62 @@ const BUILTIN_CODES: Record<string, ModeratorRole> = {
   'MAB01': 'standard',
 };
 
-function generateAIAnalysis(text: string, hasMedia: boolean, isVideo: boolean): AIAnalysisResult {
-  const textLength = text.trim().length;
-  const hookPresent = text.includes('?') || textLength > 60 || /^[A-Z]/.test(text.trim());
-  const ctaPresent = text.includes('!') || /partage|commente|dis-moi|réponds|clique/i.test(text);
+export function generateAIAnalysis(text: string, hasMedia: boolean, _isVideo: boolean): AIAnalysisResult {
+  const textAnalysis = containsBannedContent(text);
+  const imageCheck = hasMedia ? analyzeImageSafety('') : { flagged: false, reason: null };
 
-  const base = 35;
-  const textBonus = Math.min(textLength / 4, 22);
-  const mediaBonus = hasMedia ? 14 : 0;
-  const videoBonus = isVideo ? 12 : 0;
-  const hookBonus = hookPresent ? 10 : 0;
-  const ctaBonus = ctaPresent ? 7 : 0;
+  let combinedScore = textAnalysis.score;
+  const combinedCategories = [...textAnalysis.categories] as ToxicityCategory[];
 
-  const rawScore = base + textBonus + mediaBonus + videoBonus + hookBonus + ctaBonus;
-  const score = Math.min(Math.round(rawScore), 100);
+  if (imageCheck.flagged) {
+    combinedScore = Math.min(100, combinedScore + 30);
+    if (!combinedCategories.includes('sexual')) combinedCategories.push('sexual');
+  }
+
+  const finalScore = Math.min(100, combinedScore);
 
   let grade: AIGrade;
-  if (score >= 80) grade = 'excellent';
-  else if (score >= 60) grade = 'good';
-  else if (score >= 40) grade = 'average';
-  else grade = 'poor';
+  if (finalScore >= 70) grade = 'critical';
+  else if (finalScore >= 45) grade = 'dangerous';
+  else if (finalScore >= 20) grade = 'warning';
+  else grade = 'safe';
 
-  const clarity = Math.min(10, Math.round(2 + textLength / 25));
-  const structure = Math.min(10, Math.round((hasMedia ? 5 : 3) + (isVideo ? 3 : 1) + (hookPresent ? 1 : 0) + (ctaPresent ? 1 : 0)));
-  const estimatedRetention = Math.round(25 + score * 0.55);
+  let dangerLevel: DangerLevel;
+  if (finalScore >= 70) dangerLevel = 'critical';
+  else if (finalScore >= 45) dangerLevel = 'high';
+  else if (finalScore >= 20) dangerLevel = 'medium';
+  else dangerLevel = 'low';
 
-  const feedbacks: string[] = [];
-  if (!hookPresent) feedbacks.push('Commencez par une question ou une affirmation forte pour capter l\'attention');
-  if (!ctaPresent) feedbacks.push('Ajoutez un appel à l\'action pour encourager l\'engagement');
-  if (textLength < 40) feedbacks.push('Développez votre message — plus de contexte = plus d\'impact');
-  if (!hasMedia) feedbacks.push('Une image ou vidéo augmente la rétention de 3×');
-  if (isVideo && score < 60) feedbacks.push('Soignez les 3 premières secondes de votre vidéo (hook visuel)');
-  if (score >= 75) feedbacks.push('Excellent travail ! Ce contenu a un fort potentiel d\'engagement.');
-  if (feedbacks.length === 0) feedbacks.push('Bon contenu. Peaufinez le hook pour atteindre l\'excellence.');
+  const recommendation: 'allow' | 'review' | 'block' =
+    dangerLevel === 'low' ? 'allow' :
+    dangerLevel === 'medium' ? 'review' : 'block';
+
+  const feedbacks = buildSafetyFeedbacks({
+    hasBannedContent: textAnalysis.hasBannedContent,
+    categories: combinedCategories,
+    score: finalScore,
+    dangerLevel,
+    matchedTerms: textAnalysis.matchedTerms,
+    sanitized: textAnalysis.sanitized,
+    recommendation,
+  });
+
+  console.log('Seranova: Content safety analysis — score:', finalScore, 'grade:', grade, 'categories:', combinedCategories);
 
   return {
     id: `ai-${Date.now()}`,
     publicationId: '',
-    score,
+    score: finalScore,
     grade,
-    hook: hookPresent,
-    clarity,
-    structure,
-    callToAction: ctaPresent,
-    estimatedRetention,
+    dangerLevel,
+    categories: combinedCategories,
+    recommendation,
     feedbacks,
     analyzedAt: new Date().toISOString(),
   };
 }
 
-export { generateAIAnalysis };
+export { generateAIAnalysis as analyzeContentSafety };
 
 export const [AppProvider, useApp] = createContextHook(() => {
   const [publications, setPublications] = useState<Publication[]>([]);
@@ -241,16 +249,23 @@ export const [AppProvider, useApp] = createContextHook(() => {
   );
 
   const aiFlaggedPublications = useMemo(
-    () => publications.filter(p => aiReportedIds.has(p.id)),
+    () => publications.filter(p =>
+      aiReportedIds.has(p.id) ||
+      (p.aiAnalysis && p.aiAnalysis.score >= 40)
+    ),
     [publications, aiReportedIds]
   );
 
   const aiValidatedPublications = useMemo(
-    () => pendingPublications.filter(p => !aiReportedIds.has(p.id)),
+    () => pendingPublications.filter(p =>
+      !aiReportedIds.has(p.id) &&
+      !(p.aiAnalysis && p.aiAnalysis.score >= 40)
+    ),
     [pendingPublications, aiReportedIds]
   );
 
   const addPublication = useCallback((text: string, mediaUrl?: string, isVideo?: boolean, aiAnalysis?: AIAnalysisResult) => {
+    const isBlocked = aiAnalysis && aiAnalysis.recommendation === 'block';
     const newPub: Publication = {
       id: `pub-${Date.now()}`,
       authorId: currentUser.id,
@@ -258,12 +273,26 @@ export const [AppProvider, useApp] = createContextHook(() => {
       text,
       imageUrl: !isVideo ? mediaUrl : undefined,
       videoUrl: isVideo ? mediaUrl : undefined,
-      status: 'pending',
+      status: isBlocked ? 'rejected' : 'pending',
       createdAt: new Date().toISOString(),
       aiAnalysis,
     };
-    console.log('Seranova: Adding publication:', newPub.id, 'AI score:', aiAnalysis?.score);
+    console.log('Seranova: Adding publication:', newPub.id, 'safety score:', aiAnalysis?.score, 'status:', newPub.status);
     setPublications(prev => [newPub, ...prev]);
+
+    if (aiAnalysis && aiAnalysis.score >= 40) {
+      const autoReport: Report = {
+        id: `report-auto-${Date.now()}`,
+        publicationId: newPub.id,
+        reporterId: 'system-ai',
+        reason: 'ai_content',
+        description: `Détection automatique IA — Score nocivité: ${aiAnalysis.score}/100. Catégories: ${aiAnalysis.categories.join(', ')}`,
+        createdAt: new Date().toISOString(),
+        status: 'pending',
+      };
+      console.log('Seranova: Auto-flagging publication with AI score:', aiAnalysis.score);
+      setReports(prev => [autoReport, ...prev]);
+    }
   }, [currentUser.id, currentUser.name]);
 
   const editPublication = useCallback((id: string, text: string, imageUrl?: string) => {

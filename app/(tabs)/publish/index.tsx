@@ -15,13 +15,15 @@ import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
 import {
-  Send, Camera, X, Video, Bot, Zap, Target, TrendingUp, Eye,
-  CheckCircle, AlertCircle, ChevronRight, RefreshCw,
+  Send, Camera, X, Video, Bot, AlertTriangle, ShieldCheck,
+  ShieldAlert, ShieldOff, ChevronRight, RefreshCw, Shield, Zap,
 } from 'lucide-react-native';
 import { createClient } from '@supabase/supabase-js';
 import { useApp } from '@/providers/AppProvider';
 import { generateAIAnalysis } from '@/providers/AppProvider';
 import { AIAnalysisResult, AIGrade } from '@/types';
+import { CATEGORY_LABELS, DANGER_LEVEL_CONFIG } from '@/utils/contentFilter';
+import type { ToxicityCategory } from '@/utils/contentFilter';
 
 const SUPABASE_URL = 'https://bfhtygvwmntcrdjyhdvb.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_j4gif7kSrdaxyPOhW0qsuQ_0EnBNwqU';
@@ -29,41 +31,49 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 type Step = 'form' | 'analyzing' | 'result' | 'done';
 
-const GRADE_CONFIG: Record<AIGrade, { label: string; color: string; bg: string }> = {
-  excellent: { label: 'Excellent', color: '#4ADE80', bg: '#052E16' },
-  good: { label: 'Bon', color: '#60A5FA', bg: '#0C1A2E' },
-  average: { label: 'Moyen', color: '#FBBF24', bg: '#231A04' },
-  poor: { label: 'À améliorer', color: '#F87171', bg: '#2A0808' },
+const GRADE_CONFIG: Record<AIGrade, { label: string; color: string; bg: string; borderColor: string }> = {
+  safe: { label: 'Contenu sûr', color: '#4ADE80', bg: '#052E16', borderColor: '#16A34A' },
+  warning: { label: 'Avertissement', color: '#FBBF24', bg: '#231A04', borderColor: '#D97706' },
+  dangerous: { label: 'Contenu dangereux', color: '#FB923C', bg: '#2A1000', borderColor: '#EA580C' },
+  critical: { label: 'Contenu critique', color: '#EF4444', bg: '#3A0000', borderColor: '#DC2626' },
 };
 
-function ScoreRing({ score, color }: { score: number; color: string }) {
+function SafetyScoreRing({ score, grade }: { score: number; grade: AIGrade }) {
   const animVal = useRef(new Animated.Value(0)).current;
+  const cfg = GRADE_CONFIG[grade];
 
   useEffect(() => {
     Animated.timing(animVal, { toValue: score, duration: 1200, useNativeDriver: false }).start();
   }, [score]);
 
+  const isSafe = grade === 'safe';
+
   return (
-    <View style={scoreRingStyles.wrap}>
-      <View style={[scoreRingStyles.ring, { borderColor: color + '30' }]}>
-        <View style={[scoreRingStyles.ringInner, { borderColor: color }]} />
-        <View style={scoreRingStyles.scoreCenter}>
-          <Animated.Text style={[scoreRingStyles.scoreNum, { color }]}>
+    <View style={ringStyles.wrap}>
+      <View style={[ringStyles.ring, { borderColor: cfg.color + '30' }]}>
+        <View style={[ringStyles.ringInner, { borderColor: cfg.color }]} />
+        <View style={ringStyles.center}>
+          {isSafe ? (
+            <ShieldCheck size={28} color={cfg.color} />
+          ) : (
+            <ShieldAlert size={28} color={cfg.color} />
+          )}
+          <Animated.Text style={[ringStyles.score, { color: cfg.color }]}>
             {score}
           </Animated.Text>
-          <Text style={scoreRingStyles.scoreLabel}>/100</Text>
+          <Text style={ringStyles.scoreLabel}>/100</Text>
         </View>
       </View>
     </View>
   );
 }
 
-const scoreRingStyles = StyleSheet.create({
+const ringStyles = StyleSheet.create({
   wrap: { alignItems: 'center', justifyContent: 'center' },
   ring: {
-    width: 110,
-    height: 110,
-    borderRadius: 55,
+    width: 118,
+    height: 118,
+    borderRadius: 59,
     borderWidth: 6,
     alignItems: 'center',
     justifyContent: 'center',
@@ -71,42 +81,17 @@ const scoreRingStyles = StyleSheet.create({
   },
   ringInner: {
     position: 'absolute',
-    width: 110,
-    height: 110,
-    borderRadius: 55,
+    width: 118,
+    height: 118,
+    borderRadius: 59,
     borderWidth: 6,
     borderRightColor: 'transparent',
     borderBottomColor: 'transparent',
     transform: [{ rotate: '-45deg' }],
   },
-  scoreCenter: { alignItems: 'center' },
-  scoreNum: { fontSize: 30, fontWeight: '800' as const },
-  scoreLabel: { fontSize: 11, color: '#6B7280', marginTop: -2 },
-});
-
-function MetricBar({ label, value, max = 10, color }: { label: string; value: number; max?: number; color: string }) {
-  const animVal = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    Animated.timing(animVal, { toValue: value / max, duration: 900, useNativeDriver: false }).start();
-  }, [value, max]);
-
-  return (
-    <View style={metricStyles.row}>
-      <Text style={metricStyles.label}>{label}</Text>
-      <View style={metricStyles.barBg}>
-        <Animated.View style={[metricStyles.barFill, { backgroundColor: color, width: animVal.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }) }]} />
-      </View>
-      <Text style={[metricStyles.val, { color }]}>{value}/{max}</Text>
-    </View>
-  );
-}
-
-const metricStyles = StyleSheet.create({
-  row: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 },
-  label: { fontSize: 12, color: '#9CA3AF', width: 70 },
-  barBg: { flex: 1, height: 6, backgroundColor: '#1F2937', borderRadius: 3, overflow: 'hidden' },
-  barFill: { height: 6, borderRadius: 3 },
-  val: { fontSize: 12, fontWeight: '700' as const, width: 32, textAlign: 'right' },
+  center: { alignItems: 'center', gap: 2 },
+  score: { fontSize: 26, fontWeight: '800' as const, marginTop: 2 },
+  scoreLabel: { fontSize: 11, color: '#6B7280', marginTop: -3 },
 });
 
 export default function PublishScreen() {
@@ -176,12 +161,19 @@ export default function PublishScreen() {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setStep('analyzing');
 
-    await new Promise(res => setTimeout(res, 2200));
+    await new Promise(res => setTimeout(res, 2000));
 
     const result = generateAIAnalysis(text, !!media, media?.type === 'video');
     setAnalysis(result);
     setStep('result');
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+    if (result.grade === 'safe') {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } else if (result.grade === 'warning') {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    } else {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    }
   }, [text, media, t]);
 
   const handlePublish = useCallback(async () => {
@@ -214,8 +206,8 @@ export default function PublishScreen() {
     return (
       <View style={[styles.centerContainer, { backgroundColor: colors.background }]}>
         <Animated.View style={[styles.analyzingCard, { backgroundColor: colors.surface, borderColor: colors.border, transform: [{ scale: pulseAnim }] }]}>
-          <View style={styles.botIconWrap}>
-            <Bot size={36} color="#818CF8" />
+          <View style={[styles.botIconWrap, { backgroundColor: '#1E1B4B' }]}>
+            <Shield size={36} color="#818CF8" />
           </View>
           <Text style={[styles.analyzingTitle, { color: colors.text }]}>{t.aiAnalyzing}</Text>
           <Text style={[styles.analyzingDesc, { color: colors.textSecondary }]}>{t.aiAnalyzingDesc}</Text>
@@ -231,84 +223,128 @@ export default function PublishScreen() {
 
   if (step === 'result' && analysis) {
     const gradeCfg = GRADE_CONFIG[analysis.grade];
+    const dangerCfg = DANGER_LEVEL_CONFIG[analysis.dangerLevel];
+    const isBlocked = analysis.recommendation === 'block';
+    const isSafe = analysis.grade === 'safe';
+
     return (
       <ScrollView style={[styles.container, { backgroundColor: colors.background }]} showsVerticalScrollIndicator={false}>
         <Animated.View style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }] }}>
-          <View style={[styles.resultHeader, { backgroundColor: gradeCfg.bg, borderColor: gradeCfg.color + '40' }]}>
+
+          <View style={[styles.resultHeader, { backgroundColor: gradeCfg.bg, borderColor: gradeCfg.borderColor + '50' }]}>
             <View style={styles.resultHeaderTop}>
-              <View style={[styles.botBadge, { backgroundColor: '#1E1B4B' }]}>
-                <Bot size={14} color="#818CF8" />
-                <Text style={styles.botBadgeText}>{t.aiAnalysisTitle}</Text>
+              <View style={[styles.analysisBadge, { backgroundColor: '#1E1B4B' }]}>
+                <Shield size={13} color="#818CF8" />
+                <Text style={styles.analysisBadgeText}>{t.aiAnalysisTitle}</Text>
               </View>
-              <View style={[styles.gradeBadge, { backgroundColor: gradeCfg.color + '20' }]}>
+              <View style={[styles.gradeBadge, { backgroundColor: gradeCfg.color + '20', borderColor: gradeCfg.color + '40' }]}>
                 <Text style={[styles.gradeBadgeText, { color: gradeCfg.color }]}>{gradeCfg.label}</Text>
               </View>
             </View>
 
             <View style={styles.scoreRow}>
-              <ScoreRing score={analysis.score} color={gradeCfg.color} />
+              <SafetyScoreRing score={analysis.score} grade={analysis.grade} />
               <View style={styles.scoreInfo}>
-                <Text style={[styles.scoreInfoTitle, { color: gradeCfg.color }]}>{t.aiScore}</Text>
-                <View style={styles.pillRow}>
-                  <View style={[styles.pill, { backgroundColor: analysis.hook ? '#052E16' : '#2A0808' }]}>
-                    {analysis.hook
-                      ? <CheckCircle size={11} color="#4ADE80" />
-                      : <AlertCircle size={11} color="#F87171" />}
-                    <Text style={[styles.pillText, { color: analysis.hook ? '#4ADE80' : '#F87171' }]}>
-                      {analysis.hook ? t.aiHook : t.aiNoHook}
-                    </Text>
-                  </View>
-                  <View style={[styles.pill, { backgroundColor: analysis.callToAction ? '#052E16' : '#2A0808' }]}>
-                    {analysis.callToAction
-                      ? <CheckCircle size={11} color="#4ADE80" />
-                      : <AlertCircle size={11} color="#F87171" />}
-                    <Text style={[styles.pillText, { color: analysis.callToAction ? '#4ADE80' : '#F87171' }]}>
-                      {analysis.callToAction ? t.aiCTA : t.aiNoCTA}
-                    </Text>
-                  </View>
+                <Text style={[styles.scoreInfoLabel, { color: colors.textMuted }]}>{t.aiScore}</Text>
+                <View style={[styles.dangerLevelPill, { backgroundColor: dangerCfg.color + '20' }]}>
+                  <Text style={[styles.dangerLevelText, { color: dangerCfg.color }]}>
+                    Niveau {dangerCfg.label}
+                  </Text>
                 </View>
-                <View style={[styles.retentionWrap, { backgroundColor: colors.surface }]}>
-                  <Eye size={13} color={colors.textMuted} />
-                  <Text style={[styles.retentionText, { color: colors.textSecondary }]}>
-                    {t.aiRetention} : <Text style={{ color: gradeCfg.color, fontWeight: '700' }}>{analysis.estimatedRetention}%</Text>
+                <View style={[styles.recommendationPill, {
+                  backgroundColor: isBlocked ? '#3A0000' : isSafe ? '#052E16' : '#231A04',
+                }]}>
+                  {isBlocked ? (
+                    <ShieldOff size={12} color="#EF4444" />
+                  ) : isSafe ? (
+                    <ShieldCheck size={12} color="#4ADE80" />
+                  ) : (
+                    <ShieldAlert size={12} color="#FBBF24" />
+                  )}
+                  <Text style={[styles.recommendationText, {
+                    color: isBlocked ? '#EF4444' : isSafe ? '#4ADE80' : '#FBBF24',
+                  }]}>
+                    {dangerCfg.recommendation}
                   </Text>
                 </View>
               </View>
             </View>
           </View>
 
-          <View style={[styles.metricsCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            <Text style={[styles.cardTitle, { color: colors.text }]}>Métriques MAB</Text>
-            <MetricBar label={t.aiClarity} value={analysis.clarity} color="#60A5FA" />
-            <MetricBar label={t.aiStructure} value={analysis.structure} color="#818CF8" />
-            <MetricBar label="Rétention" value={Math.round(analysis.estimatedRetention / 10)} color="#4ADE80" />
-          </View>
+          {analysis.categories.length > 0 && (
+            <View style={[styles.categoriesCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <Text style={[styles.cardTitle, { color: colors.text }]}>Catégories détectées</Text>
+              <View style={styles.categoriesGrid}>
+                {analysis.categories.map((cat: ToxicityCategory) => {
+                  const catCfg = CATEGORY_LABELS[cat];
+                  return (
+                    <View key={cat} style={[styles.categoryItem, { backgroundColor: catCfg.bg, borderColor: catCfg.color + '30' }]}>
+                      <View style={[styles.categoryDot, { backgroundColor: catCfg.color }]} />
+                      <Text style={[styles.categoryItemText, { color: catCfg.color }]}>{catCfg.label}</Text>
+                    </View>
+                  );
+                })}
+              </View>
+            </View>
+          )}
+
+          {isSafe && (
+            <View style={[styles.safeCard, { backgroundColor: '#052E16', borderColor: '#16A34A40' }]}>
+              <ShieldCheck size={22} color="#4ADE80" />
+              <View style={styles.safeCardText}>
+                <Text style={styles.safeCardTitle}>Contenu sûr</Text>
+                <Text style={styles.safeCardDesc}>Aucun contenu problématique détecté. Votre message respecte les règles de la communauté.</Text>
+              </View>
+            </View>
+          )}
 
           <View style={[styles.feedbackCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <View style={styles.feedbackCardHeader}>
-              <Target size={16} color="#FBBF24" />
+              <Bot size={16} color="#818CF8" />
               <Text style={[styles.cardTitle, { color: colors.text }]}>{t.aiFeedbacks}</Text>
             </View>
             {analysis.feedbacks.map((fb, i) => (
-              <View key={i} style={[styles.feedbackItem, { borderLeftColor: '#FBBF2440' }]}>
-                <View style={[styles.feedbackDot, { backgroundColor: '#FBBF24' }]} />
+              <View key={i} style={[styles.feedbackItem, { borderLeftColor: gradeCfg.color + '40' }]}>
+                <View style={[styles.feedbackDot, { backgroundColor: gradeCfg.color }]} />
                 <Text style={[styles.feedbackText, { color: colors.textSecondary }]}>{fb}</Text>
               </View>
             ))}
           </View>
 
           <View style={[styles.actionsCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            <Pressable
-              style={[styles.publishBtn, { backgroundColor: gradeCfg.color }]}
-              onPress={handlePublish}
-            >
-              <Send size={18} color="#000" />
-              <Text style={styles.publishBtnText}>{t.publishBtn}</Text>
-            </Pressable>
-            <Pressable style={[styles.retryBtn, { borderColor: colors.border }]} onPress={() => setStep('form')}>
-              <RefreshCw size={16} color={colors.textSecondary} />
-              <Text style={[styles.retryBtnText, { color: colors.textSecondary }]}>Modifier le contenu</Text>
-            </Pressable>
+            {isBlocked ? (
+              <>
+                <View style={[styles.blockedBanner, { backgroundColor: '#3A0000', borderColor: '#DC262640' }]}>
+                  <ShieldOff size={18} color="#EF4444" />
+                  <Text style={styles.blockedBannerText}>
+                    Ce contenu a été automatiquement bloqué. Veuillez modifier votre message avant de publier.
+                  </Text>
+                </View>
+                <Pressable style={[styles.retryBtn, { borderColor: colors.border, backgroundColor: colors.surface }]} onPress={() => setStep('form')}>
+                  <RefreshCw size={16} color={colors.textSecondary} />
+                  <Text style={[styles.retryBtnText, { color: colors.textSecondary }]}>Modifier le contenu</Text>
+                </Pressable>
+              </>
+            ) : (
+              <>
+                <Pressable
+                  style={[styles.publishBtn, { backgroundColor: gradeCfg.color }]}
+                  onPress={handlePublish}
+                >
+                  <Send size={18} color="#000" />
+                  <Text style={styles.publishBtnText}>{t.publishBtn}</Text>
+                </Pressable>
+                <Pressable style={[styles.retryBtn, { borderColor: colors.border }]} onPress={() => setStep('form')}>
+                  <RefreshCw size={16} color={colors.textSecondary} />
+                  <Text style={[styles.retryBtnText, { color: colors.textSecondary }]}>Modifier le contenu</Text>
+                </Pressable>
+                {analysis.grade === 'warning' && (
+                  <Text style={[styles.warningNote, { color: colors.textMuted }]}>
+                    ⚠️ Ce contenu sera soumis à révision manuelle avant publication.
+                  </Text>
+                )}
+              </>
+            )}
           </View>
 
           <View style={styles.bottomSpacer} />
@@ -318,19 +354,20 @@ export default function PublishScreen() {
   }
 
   if (step === 'done') {
+    const gradeCfg = analysis ? GRADE_CONFIG[analysis.grade] : GRADE_CONFIG.safe;
     return (
       <View style={[styles.centerContainer, { backgroundColor: colors.background }]}>
         <Animated.View style={[styles.doneCard, { backgroundColor: colors.surface, borderColor: colors.border, opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
           <View style={[styles.doneIconWrap, { backgroundColor: '#052E16' }]}>
-            <CheckCircle size={48} color="#4ADE80" />
+            <ShieldCheck size={48} color="#4ADE80" />
           </View>
           <Text style={[styles.doneTitle, { color: colors.text }]}>{t.publicationSent}</Text>
           <Text style={[styles.doneDesc, { color: colors.textSecondary }]}>{t.publicationSentMsg}</Text>
           {analysis && (
-            <View style={[styles.doneSummary, { backgroundColor: GRADE_CONFIG[analysis.grade].bg }]}>
-              <TrendingUp size={14} color={GRADE_CONFIG[analysis.grade].color} />
-              <Text style={[styles.doneSummaryText, { color: GRADE_CONFIG[analysis.grade].color }]}>
-                Score MAB : {analysis.score}/100 — {GRADE_CONFIG[analysis.grade].label}
+            <View style={[styles.doneSummary, { backgroundColor: gradeCfg.bg, borderColor: gradeCfg.borderColor + '40' }]}>
+              <Shield size={14} color={gradeCfg.color} />
+              <Text style={[styles.doneSummaryText, { color: gradeCfg.color }]}>
+                Sécurité : {gradeCfg.label} — Score nocivité {analysis.score}/100
               </Text>
             </View>
           )}
@@ -352,9 +389,9 @@ export default function PublishScreen() {
           <Text style={[styles.heading, { color: colors.text, fontSize: 22 * textScale }]}>
             {t.shareHappiness}
           </Text>
-          <View style={[styles.aiHint, { backgroundColor: '#1E1B4B', borderColor: '#4338CA40' }]}>
-            <Bot size={13} color="#818CF8" />
-            <Text style={styles.aiHintText}>Analyse IA automatique après soumission</Text>
+          <View style={[styles.safetyHint, { backgroundColor: '#1E1B4B', borderColor: '#4338CA40' }]}>
+            <Shield size={13} color="#818CF8" />
+            <Text style={styles.safetyHintText}>Analyse de sécurité automatique avant publication</Text>
           </View>
         </View>
 
@@ -364,7 +401,7 @@ export default function PublishScreen() {
               <Camera size={26} color={colors.primary} />
             </View>
             <Text style={[styles.photoAreaLabel, { color: colors.text }]}>{t.addPhoto}</Text>
-            <Text style={[styles.photoAreaSub, { color: colors.textMuted }]}>Photo, vidéo, Reels, TikTok...</Text>
+            <Text style={[styles.photoAreaSub, { color: colors.textMuted }]}>Photo ou vidéo</Text>
           </Pressable>
         ) : (
           <View style={styles.previewWrap}>
@@ -378,7 +415,7 @@ export default function PublishScreen() {
                 <Text style={styles.videoPreviewLabel}>Vidéo sélectionnée</Text>
                 <View style={[styles.videoBadge, { backgroundColor: '#818CF840' }]}>
                   <Zap size={11} color="#818CF8" />
-                  <Text style={styles.videoBadgeText}>Pipeline IA activé</Text>
+                  <Text style={styles.videoBadgeText}>Analyse IA activée</Text>
                 </View>
               </View>
             )}
@@ -398,15 +435,11 @@ export default function PublishScreen() {
           textAlignVertical="top"
         />
 
-        <View style={[styles.mabHint, { backgroundColor: colors.surfaceLight, borderColor: colors.border }]}>
-          <Text style={[styles.mabHintLabel, { color: colors.textMuted }]}>SCORE MAB — À optimiser</Text>
-          <View style={styles.mabPillRow}>
-            {['Clarté', 'Action', 'Progression', 'Sens'].map(p => (
-              <View key={p} style={[styles.mabPill, { borderColor: colors.border }]}>
-                <Text style={[styles.mabPillText, { color: colors.textMuted }]}>{p}</Text>
-              </View>
-            ))}
-          </View>
+        <View style={[styles.safetyInfo, { backgroundColor: colors.surfaceLight, borderColor: colors.border }]}>
+          <AlertTriangle size={13} color={colors.textMuted} />
+          <Text style={[styles.safetyInfoText, { color: colors.textMuted }]}>
+            Les contenus haineux, violents, sexuels ou traumatisants sont automatiquement détectés et bloqués.
+          </Text>
         </View>
 
         <Pressable
@@ -414,7 +447,7 @@ export default function PublishScreen() {
           onPress={handleAnalyze}
           disabled={!text.trim() && !media}
         >
-          <Bot size={18} color={colors.background} />
+          <Shield size={18} color={colors.background} />
           <Text style={[styles.submitBtnText, { color: colors.background }]}>Analyser & Publier</Text>
           <ChevronRight size={16} color={colors.background} />
         </Pressable>
@@ -448,64 +481,64 @@ const styles = StyleSheet.create({
   scrollContent: { padding: 20, paddingBottom: 40 },
 
   formHeader: { marginBottom: 20, gap: 10 },
-  heading: { fontWeight: '700' as const },
-  aiHint: {
+  heading: { fontWeight: '800' as const, lineHeight: 30 },
+  safetyHint: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 7,
     paddingHorizontal: 12,
-    paddingVertical: 7,
+    paddingVertical: 8,
     borderRadius: 10,
     borderWidth: 1,
     alignSelf: 'flex-start',
   },
-  aiHintText: { fontSize: 12, color: '#818CF8', fontWeight: '500' as const },
+  safetyHintText: { color: '#818CF8', fontSize: 12, fontWeight: '500' as const },
 
   photoArea: {
+    borderRadius: 16,
     borderWidth: 1.5,
     borderStyle: 'dashed' as const,
-    borderRadius: 20,
-    padding: 32,
+    padding: 28,
     alignItems: 'center',
-    marginBottom: 16,
     gap: 10,
+    marginBottom: 16,
   },
   photoAreaIconWrap: {
     width: 56,
     height: 56,
-    borderRadius: 28,
+    borderRadius: 16,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 4,
   },
   photoAreaLabel: { fontSize: 15, fontWeight: '600' as const },
-  photoAreaSub: { fontSize: 12 },
+  photoAreaSub: { fontSize: 13 },
 
-  previewWrap: { borderRadius: 20, overflow: 'hidden', marginBottom: 16, position: 'relative' },
-  previewImage: { width: '100%', height: 220 },
+  previewWrap: { marginBottom: 16, borderRadius: 16, overflow: 'hidden', position: 'relative' },
+  previewImage: { width: '100%', height: 220, borderRadius: 16 },
   videoPreview: {
-    height: 220,
-    alignItems: 'center',
+    height: 160,
+    borderRadius: 16,
     justifyContent: 'center',
+    alignItems: 'center',
     gap: 10,
   },
   videoIconWrap: {
     width: 64,
     height: 64,
-    borderRadius: 32,
+    borderRadius: 20,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  videoPreviewLabel: { color: 'white', fontSize: 14, fontWeight: '500' as const },
+  videoPreviewLabel: { color: '#9CA3AF', fontSize: 13 },
   videoBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
     borderRadius: 20,
   },
-  videoBadgeText: { color: '#818CF8', fontSize: 11, fontWeight: '600' as const },
+  videoBadgeText: { color: '#818CF8', fontSize: 12 },
   removeBtn: {
     position: 'absolute',
     top: 10,
@@ -516,38 +549,33 @@ const styles = StyleSheet.create({
   },
 
   textInput: {
-    minHeight: 110,
+    borderRadius: 14,
     borderWidth: 1,
-    borderRadius: 16,
-    padding: 14,
-    marginBottom: 14,
+    padding: 16,
     fontSize: 15,
+    minHeight: 100,
+    marginBottom: 14,
     lineHeight: 22,
   },
 
-  mabHint: {
-    borderRadius: 14,
-    padding: 14,
+  safetyInfo: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 10,
     borderWidth: 1,
-    marginBottom: 20,
-    gap: 10,
+    marginBottom: 18,
   },
-  mabHintLabel: { fontSize: 10, fontWeight: '700' as const, letterSpacing: 0.5 },
-  mabPillRow: { flexDirection: 'row', gap: 6, flexWrap: 'wrap' as const },
-  mabPill: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 8,
-    borderWidth: 1,
-  },
-  mabPillText: { fontSize: 11, fontWeight: '500' as const },
+  safetyInfoText: { fontSize: 12, flex: 1, lineHeight: 17 },
 
   submitBtn: {
     flexDirection: 'row',
-    justifyContent: 'center',
     alignItems: 'center',
+    justifyContent: 'center',
     gap: 8,
-    padding: 17,
+    paddingVertical: 16,
     borderRadius: 16,
   },
   submitBtnDisabled: { opacity: 0.4 },
@@ -555,31 +583,30 @@ const styles = StyleSheet.create({
 
   analyzingCard: {
     width: '100%',
-    borderRadius: 28,
-    borderWidth: 1,
+    borderRadius: 24,
     padding: 32,
     alignItems: 'center',
-    gap: 12,
+    gap: 16,
+    borderWidth: 1,
   },
   botIconWrap: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: '#1E1B4B',
+    width: 80,
+    height: 80,
+    borderRadius: 24,
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 4,
   },
-  analyzingTitle: { fontSize: 20, fontWeight: '700' as const },
-  analyzingDesc: { fontSize: 13, textAlign: 'center', lineHeight: 20 },
-  analyzingDots: { flexDirection: 'row', gap: 8, marginTop: 8 },
+  analyzingTitle: { fontSize: 20, fontWeight: '700' as const, textAlign: 'center' },
+  analyzingDesc: { fontSize: 14, textAlign: 'center', lineHeight: 21 },
+  analyzingDots: { flexDirection: 'row', gap: 8 },
   dot: { width: 8, height: 8, borderRadius: 4 },
 
   resultHeader: {
     margin: 16,
-    borderRadius: 24,
-    borderWidth: 1,
+    borderRadius: 20,
     padding: 20,
+    borderWidth: 1,
     gap: 16,
   },
   resultHeaderTop: {
@@ -587,141 +614,173 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  botBadge: {
+  analysisBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
     paddingHorizontal: 10,
     paddingVertical: 5,
-    borderRadius: 20,
+    borderRadius: 8,
   },
-  botBadgeText: { fontSize: 12, color: '#818CF8', fontWeight: '600' as const },
+  analysisBadgeText: { color: '#818CF8', fontSize: 12, fontWeight: '600' as const },
   gradeBadge: {
     paddingHorizontal: 12,
     paddingVertical: 5,
-    borderRadius: 20,
+    borderRadius: 10,
+    borderWidth: 1,
   },
   gradeBadgeText: { fontSize: 13, fontWeight: '700' as const },
-  scoreRow: { flexDirection: 'row', gap: 20, alignItems: 'center' },
-  scoreInfo: { flex: 1, gap: 10 },
-  scoreInfoTitle: { fontSize: 12, fontWeight: '700' as const, letterSpacing: 0.5 },
-  pillRow: { flexDirection: 'row', gap: 6, flexWrap: 'wrap' as const },
-  pill: {
+  scoreRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 8,
+    gap: 20,
+  },
+  scoreInfo: { flex: 1, gap: 8 },
+  scoreInfoLabel: { fontSize: 11, fontWeight: '500' as const, textTransform: 'uppercase' as const, letterSpacing: 0.5 },
+  dangerLevelPill: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 8,
   },
-  pillText: { fontSize: 10, fontWeight: '600' as const },
-  retentionWrap: {
+  dangerLevelText: { fontSize: 13, fontWeight: '700' as const },
+  recommendationPill: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 10,
     alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
   },
-  retentionText: { fontSize: 12 },
+  recommendationText: { fontSize: 12, fontWeight: '600' as const },
 
-  metricsCard: {
+  categoriesCard: {
     marginHorizontal: 16,
     marginBottom: 12,
-    borderRadius: 20,
+    borderRadius: 16,
+    padding: 16,
     borderWidth: 1,
-    padding: 18,
+    gap: 12,
   },
+  cardTitle: { fontSize: 15, fontWeight: '700' as const },
+  categoriesGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  categoryItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  categoryDot: { width: 7, height: 7, borderRadius: 4 },
+  categoryItemText: { fontSize: 13, fontWeight: '600' as const },
+
+  safeCard: {
+    marginHorizontal: 16,
+    marginBottom: 12,
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  safeCardText: { flex: 1, gap: 4 },
+  safeCardTitle: { color: '#4ADE80', fontSize: 15, fontWeight: '700' as const },
+  safeCardDesc: { color: '#86EFAC', fontSize: 13, lineHeight: 18 },
+
   feedbackCard: {
     marginHorizontal: 16,
     marginBottom: 12,
-    borderRadius: 20,
+    borderRadius: 16,
+    padding: 16,
     borderWidth: 1,
-    padding: 18,
+    gap: 12,
   },
-  feedbackCardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 14,
-  },
-  cardTitle: {
-    fontSize: 15,
-    fontWeight: '700' as const,
-  },
+  feedbackCardHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   feedbackItem: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 10,
-    marginBottom: 10,
     paddingLeft: 12,
     borderLeftWidth: 2,
   },
-  feedbackDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    marginTop: 6,
-  },
+  feedbackDot: { width: 6, height: 6, borderRadius: 3, marginTop: 6 },
   feedbackText: { fontSize: 13, lineHeight: 20, flex: 1 },
 
   actionsCard: {
     marginHorizontal: 16,
     marginBottom: 12,
-    borderRadius: 20,
-    borderWidth: 1,
+    borderRadius: 16,
     padding: 16,
+    borderWidth: 1,
     gap: 10,
+  },
+  blockedBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  blockedBannerText: {
+    color: '#FCA5A5',
+    fontSize: 13,
+    lineHeight: 19,
+    flex: 1,
   },
   publishBtn: {
     flexDirection: 'row',
-    justifyContent: 'center',
     alignItems: 'center',
+    justifyContent: 'center',
     gap: 8,
     paddingVertical: 16,
     borderRadius: 14,
   },
-  publishBtnText: { fontSize: 16, fontWeight: '700' as const, color: '#000' },
+  publishBtnText: { color: '#000', fontSize: 16, fontWeight: '700' as const },
   retryBtn: {
     flexDirection: 'row',
-    justifyContent: 'center',
     alignItems: 'center',
+    justifyContent: 'center',
     gap: 8,
-    paddingVertical: 13,
+    paddingVertical: 14,
     borderRadius: 14,
     borderWidth: 1,
   },
-  retryBtnText: { fontSize: 14, fontWeight: '500' as const },
+  retryBtnText: { fontSize: 14, fontWeight: '600' as const },
+  warningNote: { fontSize: 12, textAlign: 'center', lineHeight: 17 },
 
   doneCard: {
     width: '100%',
-    borderRadius: 28,
-    borderWidth: 1,
-    padding: 32,
+    borderRadius: 24,
+    padding: 28,
     alignItems: 'center',
     gap: 12,
+    borderWidth: 1,
   },
   doneIconWrap: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
+    width: 88,
+    height: 88,
+    borderRadius: 28,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 4,
+    marginBottom: 8,
   },
-  doneTitle: { fontSize: 22, fontWeight: '800' as const },
+  doneTitle: { fontSize: 22, fontWeight: '800' as const, textAlign: 'center' },
   doneDesc: { fontSize: 14, textAlign: 'center', lineHeight: 21 },
   doneSummary: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
     paddingVertical: 10,
-    borderRadius: 14,
+    borderRadius: 12,
+    borderWidth: 1,
     marginTop: 4,
   },
   doneSummaryText: { fontSize: 13, fontWeight: '600' as const },
-
   bottomSpacer: { height: 40 },
 });

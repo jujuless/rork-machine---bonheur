@@ -1,3 +1,7 @@
+import type { ToxicityCategory, DangerLevel } from '@/utils/contentFilter';
+
+export type { ToxicityCategory, DangerLevel };
+
 export interface User {
   id: string;
   name: string;
@@ -77,18 +81,16 @@ export interface InspiringQuote {
   author: string;
 }
 
-export type AIGrade = 'excellent' | 'good' | 'average' | 'poor';
+export type AIGrade = 'safe' | 'warning' | 'dangerous' | 'critical';
 
 export interface AIAnalysisResult {
   id: string;
   publicationId: string;
   score: number;
   grade: AIGrade;
-  hook: boolean;
-  clarity: number;
-  structure: number;
-  callToAction: boolean;
-  estimatedRetention: number;
+  dangerLevel: DangerLevel;
+  categories: ToxicityCategory[];
+  recommendation: 'allow' | 'review' | 'block';
   feedbacks: string[];
   analyzedAt: string;
 }
