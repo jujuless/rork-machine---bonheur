@@ -17,19 +17,16 @@ import * as Haptics from 'expo-haptics';
 import {
   Send, Camera, X, Video, Bot, AlertTriangle, ShieldCheck,
   ShieldAlert, ShieldOff, ChevronRight, RefreshCw, Shield, Zap,
+  Upload,
 } from 'lucide-react-native';
-import { createClient } from '@supabase/supabase-js';
 import { useApp } from '@/providers/AppProvider';
 import { generateAIAnalysis } from '@/providers/AppProvider';
 import { AIAnalysisResult, AIGrade } from '@/types';
 import { CATEGORY_LABELS, DANGER_LEVEL_CONFIG } from '@/utils/contentFilter';
 import type { ToxicityCategory } from '@/utils/contentFilter';
+import { useUploadMedia } from '@/hooks/useUploadMedia';
 
-const SUPABASE_URL = 'https://bfhtygvwmntcrdjyhdvb.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_j4gif7kSrdaxyPOhW0qsuQ_0EnBNwqU';
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
-type Step = 'form' | 'analyzing' | 'result' | 'done';
+type Step = 'form' | 'analyzing' | 'uploading' | 'result' | 'done';
 
 const GRADE_CONFIG: Record<AIGrade, { label: string; color: string; bg: string; borderColor: string }> = {
   safe: { label: 'Contenu sûr', color: '#4ADE80', bg: '#052E16', borderColor: '#16A34A' },
@@ -96,6 +93,7 @@ const ringStyles = StyleSheet.create({
 
 export default function PublishScreen() {
   const { addPublication, colors, t, textScale } = useApp();
+  const { upload, isUploading, error: uploadError, reset: resetUpload } = useUploadMedia();
 
   const [text, setText] = useState('');
   const [media, setMedia] = useState<{ uri: string; type: 'image' | 'video' } | null>(null);
@@ -107,7 +105,7 @@ export default function PublishScreen() {
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
-    if (step === 'analyzing') {
+    if (step === 'analyzing' || step === 'uploading') {
       const pulse = Animated.loop(
         Animated.sequence([
           Animated.timing(pulseAnim, { toValue: 1.08, duration: 700, useNativeDriver: true }),
@@ -130,28 +128,36 @@ export default function PublishScreen() {
     }
   }, [step]);
 
+  const pickImage = useCallback(async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.85,
+    });
+    if (!result.canceled && result.assets[0]) {
+      setMedia({ uri: result.assets[0].uri, type: 'image' });
+    }
+  }, []);
+
+  const pickVideo = useCallback(async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+      quality: 1,
+    });
+    if (!result.canceled && result.assets[0]) {
+      setMedia({ uri: result.assets[0].uri, type: 'video' });
+    }
+  }, []);
+
   const pickMedia = useCallback(async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.All,
-      quality: 1,
+      quality: 0.85,
     });
     if (!result.canceled && result.assets[0]) {
       const asset = result.assets[0];
       setMedia({ uri: asset.uri, type: asset.type === 'video' ? 'video' : 'image' });
     }
   }, []);
-
-  const uploadToSupabase = async (uri: string, type: 'image' | 'video') => {
-    const response = await fetch(uri);
-    const arrayBuffer = await response.arrayBuffer();
-    const ext = type === 'video' ? 'mp4' : 'jpg';
-    const fileName = `${Date.now()}.${ext}`;
-    const contentType = type === 'video' ? 'video/mp4' : 'image/jpeg';
-    const { error } = await supabase.storage.from('videos').upload(fileName, arrayBuffer, { contentType, upsert: false });
-    if (error) throw error;
-    const { data } = supabase.storage.from('videos').getPublicUrl(fileName);
-    return data.publicUrl;
-  };
 
   const handleAnalyze = useCallback(async () => {
     if (!text.trim() && !media) {
@@ -179,28 +185,41 @@ export default function PublishScreen() {
   const handlePublish = useCallback(async () => {
     try {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      setStep('uploading');
       let mediaUrl: string | undefined;
+
       if (media) {
         try {
-          mediaUrl = await uploadToSupabase(media.uri, media.type);
+          const result = await upload(media.uri, media.type);
+          mediaUrl = result.publicUrl;
+          console.log('Seranova: Media uploaded and saved to media_items:', mediaUrl.slice(0, 80));
         } catch (e) {
-          console.log('Seranova: Upload failed, publishing without media URL:', e);
+          console.log('Seranova: Upload failed, continuing without media URL:', e);
+          const errMsg = e instanceof Error ? e.message : 'Erreur upload';
+          Alert.alert(
+            'Erreur upload',
+            `${errMsg}\n\nLa publication sera créée sans média.`,
+            [{ text: 'Continuer', onPress: () => {} }]
+          );
         }
       }
+
       addPublication(text.trim(), mediaUrl, media?.type === 'video', analysis ?? undefined);
       setStep('done');
     } catch (e) {
       console.log('Seranova: Publish error:', e);
+      setStep('result');
       Alert.alert('Erreur', 'Impossible de publier. Réessayez.');
     }
-  }, [text, media, analysis, addPublication]);
+  }, [text, media, analysis, addPublication, upload]);
 
   const handleReset = useCallback(() => {
     setText('');
     setMedia(null);
     setAnalysis(null);
+    resetUpload();
     setStep('form');
-  }, []);
+  }, [resetUpload]);
 
   if (step === 'analyzing') {
     return (
@@ -214,6 +233,27 @@ export default function PublishScreen() {
           <View style={styles.analyzingDots}>
             {[0, 1, 2].map(i => (
               <BounceDot key={i} delay={i * 200} color="#818CF8" />
+            ))}
+          </View>
+        </Animated.View>
+      </View>
+    );
+  }
+
+  if (step === 'uploading') {
+    return (
+      <View style={[styles.centerContainer, { backgroundColor: colors.background }]}>
+        <Animated.View style={[styles.analyzingCard, { backgroundColor: colors.surface, borderColor: colors.border, transform: [{ scale: pulseAnim }] }]}>
+          <View style={[styles.botIconWrap, { backgroundColor: '#0C1A2E' }]}>
+            <Upload size={36} color="#38BDF8" />
+          </View>
+          <Text style={[styles.analyzingTitle, { color: colors.text }]}>Upload en cours…</Text>
+          <Text style={[styles.analyzingDesc, { color: colors.textSecondary }]}>
+            Envoi du fichier vers le serveur sécurisé
+          </Text>
+          <View style={styles.analyzingDots}>
+            {[0, 1, 2].map(i => (
+              <BounceDot key={i} delay={i * 200} color="#38BDF8" />
             ))}
           </View>
         </Animated.View>
@@ -328,11 +368,14 @@ export default function PublishScreen() {
             ) : (
               <>
                 <Pressable
-                  style={[styles.publishBtn, { backgroundColor: gradeCfg.color }]}
+                  style={[styles.publishBtn, { backgroundColor: gradeCfg.color }, isUploading && styles.submitBtnDisabled]}
                   onPress={handlePublish}
+                  disabled={isUploading}
                 >
                   <Send size={18} color="#000" />
-                  <Text style={styles.publishBtnText}>{t.publishBtn}</Text>
+                  <Text style={styles.publishBtnText}>
+                    {isUploading ? 'Upload...' : t.publishBtn}
+                  </Text>
                 </Pressable>
                 <Pressable style={[styles.retryBtn, { borderColor: colors.border }]} onPress={() => setStep('form')}>
                   <RefreshCw size={16} color={colors.textSecondary} />
@@ -396,13 +439,28 @@ export default function PublishScreen() {
         </View>
 
         {!media ? (
-          <Pressable style={[styles.photoArea, { borderColor: colors.border, backgroundColor: colors.surface }]} onPress={pickMedia}>
-            <View style={[styles.photoAreaIconWrap, { backgroundColor: colors.primaryLight }]}>
-              <Camera size={26} color={colors.primary} />
-            </View>
-            <Text style={[styles.photoAreaLabel, { color: colors.text }]}>{t.addPhoto}</Text>
-            <Text style={[styles.photoAreaSub, { color: colors.textMuted }]}>Photo ou vidéo</Text>
-          </Pressable>
+          <View style={styles.mediaPickerRow}>
+            <Pressable
+              style={[styles.mediaPickerBtn, { borderColor: colors.border, backgroundColor: colors.surface, flex: 1 }]}
+              onPress={pickImage}
+            >
+              <View style={[styles.mediaPickerIcon, { backgroundColor: colors.primaryLight }]}>
+                <Camera size={22} color={colors.primary} />
+              </View>
+              <Text style={[styles.mediaPickerLabel, { color: colors.text }]}>Image</Text>
+              <Text style={[styles.mediaPickerSub, { color: colors.textMuted }]}>JPG / PNG</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.mediaPickerBtn, { borderColor: colors.border, backgroundColor: colors.surface, flex: 1 }]}
+              onPress={pickVideo}
+            >
+              <View style={[styles.mediaPickerIcon, { backgroundColor: '#1E1B4B' }]}>
+                <Video size={22} color="#818CF8" />
+              </View>
+              <Text style={[styles.mediaPickerLabel, { color: colors.text }]}>Vidéo</Text>
+              <Text style={[styles.mediaPickerSub, { color: colors.textMuted }]}>MP4 / MOV</Text>
+            </Pressable>
+          </View>
         ) : (
           <View style={styles.previewWrap}>
             {media.type === 'image' ? (
@@ -494,24 +552,29 @@ const styles = StyleSheet.create({
   },
   safetyHintText: { color: '#818CF8', fontSize: 12, fontWeight: '500' as const },
 
-  photoArea: {
-    borderRadius: 16,
-    borderWidth: 1.5,
-    borderStyle: 'dashed' as const,
-    padding: 28,
-    alignItems: 'center',
-    gap: 10,
+  mediaPickerRow: {
+    flexDirection: 'row',
+    gap: 12,
     marginBottom: 16,
   },
-  photoAreaIconWrap: {
-    width: 56,
-    height: 56,
-    borderRadius: 16,
+  mediaPickerBtn: {
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderStyle: 'dashed' as const,
+    paddingVertical: 20,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    gap: 8,
+  },
+  mediaPickerIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  photoAreaLabel: { fontSize: 15, fontWeight: '600' as const },
-  photoAreaSub: { fontSize: 13 },
+  mediaPickerLabel: { fontSize: 14, fontWeight: '600' as const },
+  mediaPickerSub: { fontSize: 11 },
 
   previewWrap: { marginBottom: 16, borderRadius: 16, overflow: 'hidden', position: 'relative' },
   previewImage: { width: '100%', height: 220, borderRadius: 16 },

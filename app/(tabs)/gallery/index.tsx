@@ -1,592 +1,559 @@
-import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useCallback, useRef, useMemo } from 'react';
 import {
   View, Text, StyleSheet, FlatList, Pressable, Dimensions,
-  Platform, ActivityIndicator, Modal, StatusBar,
+  Platform, ActivityIndicator, Modal, RefreshControl, StatusBar,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { Video, ResizeMode, AVPlaybackStatus } from 'expo-av';
-import { Play, VolumeX, Volume2, Film, Maximize2, X, Pause, RotateCcw } from 'lucide-react-native';
-import { useApp } from '@/providers/AppProvider';
-import { EmptyState } from '@/components/EmptyState';
-import { DEMO_VIDEOS } from '@/mocks/publications';
+import {
+  Play, Film, ImageIcon, X, RotateCcw, Grid2x2, List,
+  AlertCircle, RefreshCw,
+} from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useApp } from '@/providers/AppProvider';
+import { useMediaFeed, MediaItem } from '@/hooks/useMediaFeed';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
-const FEED_VIDEO_HEIGHT = Math.round(SCREEN_WIDTH * (16 / 9));
+const GRID_COLS = 3;
+const GRID_ITEM_SIZE = (SCREEN_WIDTH - 4) / GRID_COLS;
 
-interface VideoFeedItem {
-  id: string;
-  title: string;
-  videoUrl: string;
-  thumbnailUrl: string;
-  authorName: string;
+type ViewMode = 'grid' | 'list';
+
+interface VideoCardProps {
+  item: MediaItem;
+  onPress: () => void;
 }
 
-// ─── Fullscreen item ───────────────────────────────────────────────────────────
-
-interface FullscreenItemProps {
-  item: VideoFeedItem;
-  isActive: boolean;
-  isMuted: boolean;
-  onToggleMute: () => void;
-  onFinished: () => void;
-}
-
-const FullscreenItem = React.memo(({ item, isActive, isMuted, onToggleMute, onFinished }: FullscreenItemProps) => {
-  const videoRef = useRef<Video>(null);
-  const [isBuffering, setIsBuffering] = useState(false);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [isPaused, setIsPaused] = useState(false);
-  const [hasError, setHasError] = useState(false);
-
-  useEffect(() => {
-    if (!isActive) {
-      setIsPlaying(false);
-      setIsBuffering(false);
-      setIsPaused(false);
-    }
-  }, [isActive]);
-
-  const handleStatusUpdate = useCallback((status: AVPlaybackStatus) => {
-    if (status.isLoaded) {
-      setIsBuffering(status.isBuffering);
-      setIsPlaying(status.isPlaying);
-      setHasError(false);
-      if (status.didJustFinish) {
-        console.log('MAB FS: Video finished, advancing to next');
-        videoRef.current?.stopAsync();
-        onFinished();
-      }
-    } else if ('error' in status && status.error) {
-      console.log('MAB FS: Video error:', status.error);
-      setHasError(true);
-    }
-  }, [onFinished]);
-
-  const handleTap = useCallback(() => {
-    if (!isActive) return;
-    if (isPaused) {
-      videoRef.current?.playAsync();
-      setIsPaused(false);
-    } else {
-      videoRef.current?.pauseAsync();
-      setIsPaused(true);
-    }
-  }, [isActive, isPaused]);
-
-  const handleRetry = useCallback(() => {
-    setHasError(false);
-    videoRef.current?.playAsync().catch(() => setHasError(true));
-  }, []);
-
+const VideoCard = React.memo(({ item, onPress }: VideoCardProps) => {
   return (
-    <Pressable style={fsStyles.item} onPress={handleTap}>
-      {isActive && !hasError ? (
-        <Video
-          ref={videoRef}
-          source={{ uri: item.videoUrl }}
-          posterSource={{ uri: item.thumbnailUrl }}
-          usePoster
-          style={fsStyles.video}
-          resizeMode={ResizeMode.COVER}
-          shouldPlay={!isPaused}
-          isMuted={isMuted}
-          onPlaybackStatusUpdate={handleStatusUpdate}
-        />
-      ) : (
-        <Image
-          source={{ uri: item.thumbnailUrl }}
-          style={fsStyles.video}
-          contentFit="cover"
-        />
-      )}
-
-      {isBuffering && isActive && (
-        <View style={fsStyles.centerOverlay} pointerEvents="none">
-          <ActivityIndicator size="large" color="#4ADE80" />
+    <Pressable style={listStyles.card} onPress={onPress}>
+      <View style={listStyles.videoThumb}>
+        <View style={listStyles.videoIconBg}>
+          <Play size={28} color="#FFF" fill="#FFF" />
         </View>
-      )}
-
-      {isPaused && !isBuffering && isActive && (
-        <View style={fsStyles.centerOverlay} pointerEvents="none">
-          <View style={fsStyles.pauseCircle}>
-            <Pause size={28} color="#FFF" fill="#FFF" />
-          </View>
+        <View style={listStyles.videoBadge}>
+          <Film size={11} color="#FFF" />
+          <Text style={listStyles.videoBadgeText}>Vidéo</Text>
         </View>
-      )}
-
-      {(!isActive || (!isPlaying && !isBuffering && !isPaused)) && !hasError && (
-        <View style={fsStyles.centerOverlay} pointerEvents="none">
-          <View style={fsStyles.pauseCircle}>
-            <Play size={28} color="#FFF" fill="#FFF" />
-          </View>
-        </View>
-      )}
-
-      {hasError && (
-        <View style={fsStyles.centerOverlay}>
-          <Pressable style={fsStyles.retryBtn} onPress={handleRetry}>
-            <RotateCcw size={18} color="#FFF" />
-            <Text style={fsStyles.retryText}>Réessayer</Text>
-          </Pressable>
-        </View>
-      )}
-
-      <View style={fsStyles.bottomInfo} pointerEvents="none">
-        <Text style={fsStyles.fsAuthor}>{item.authorName}</Text>
-        <Text style={fsStyles.fsTitle}>{item.title}</Text>
       </View>
-
-      <Pressable style={fsStyles.muteBtn} onPress={onToggleMute}>
-        {isMuted ? <VolumeX size={18} color="#FFF" /> : <Volume2 size={18} color="#FFF" />}
-      </Pressable>
+      <MediaMeta item={item} />
     </Pressable>
   );
 });
 
-// ─── Feed item ─────────────────────────────────────────────────────────────────
-
-interface FeedItemProps {
-  item: VideoFeedItem;
-  isActive: boolean;
-  isMuted: boolean;
+interface ImageCardProps {
+  item: MediaItem;
   onPress: () => void;
-  onToggleMute: () => void;
-  onFullscreen: () => void;
 }
 
-const FeedItem = React.memo(({ item, isActive, isMuted, onPress, onToggleMute, onFullscreen }: FeedItemProps) => {
+const ImageCard = React.memo(({ item, onPress }: ImageCardProps) => {
+  return (
+    <Pressable style={listStyles.card} onPress={onPress}>
+      <Image
+        source={{ uri: item.file_path }}
+        style={listStyles.cardImage}
+        contentFit="cover"
+      />
+      <MediaMeta item={item} />
+    </Pressable>
+  );
+});
+
+function MediaMeta({ item }: { item: MediaItem }) {
+  const date = new Date(item.created_at);
+  const label = `${date.getDate().toString().padStart(2, '0')}/${(date.getMonth() + 1).toString().padStart(2, '0')}/${date.getFullYear()}`;
+  const statusColor = item.status === 'approved' ? '#4ADE80' : item.status === 'rejected' ? '#EF4444' : '#FBBF24';
+  const statusLabel = item.status === 'approved' ? 'Approuvé' : item.status === 'rejected' ? 'Refusé' : 'En attente';
+  return (
+    <View style={listStyles.meta}>
+      <View style={listStyles.metaLeft}>
+        <Text style={listStyles.metaDate}>{label}</Text>
+        <View style={[listStyles.statusPill, { backgroundColor: statusColor + '20' }]}>
+          <View style={[listStyles.statusDot, { backgroundColor: statusColor }]} />
+          <Text style={[listStyles.statusText, { color: statusColor }]}>{statusLabel}</Text>
+        </View>
+      </View>
+      <View style={[listStyles.typePill, { backgroundColor: item.media_type === 'video' ? '#1E1B4B' : '#0C1A2E' }]}>
+        {item.media_type === 'video'
+          ? <Film size={11} color="#818CF8" />
+          : <ImageIcon size={11} color="#38BDF8" />}
+        <Text style={[listStyles.typeText, { color: item.media_type === 'video' ? '#818CF8' : '#38BDF8' }]}>
+          {item.media_type === 'video' ? 'Vidéo' : 'Image'}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+interface FullscreenVideoProps {
+  item: MediaItem;
+  onClose: () => void;
+}
+
+function FullscreenVideo({ item, onClose }: FullscreenVideoProps) {
+  const insets = useSafeAreaInsets();
   const videoRef = useRef<Video>(null);
-  const [isBuffering, setIsBuffering] = useState(false);
-  const [isPlaying, setIsPlaying] = useState(false);
   const [hasError, setHasError] = useState(false);
+  const [isBuffering, setIsBuffering] = useState(true);
 
-  useEffect(() => {
-    if (!isActive) {
-      setIsPlaying(false);
-      setIsBuffering(false);
-    }
-  }, [isActive]);
-
-  const handleStatusUpdate = useCallback((status: AVPlaybackStatus) => {
+  const handleStatus = useCallback((status: AVPlaybackStatus) => {
     if (status.isLoaded) {
       setIsBuffering(status.isBuffering);
-      setIsPlaying(status.isPlaying);
       setHasError(false);
-      if (status.didJustFinish) {
-        console.log('MAB Feed: Video finished, stopping');
-        videoRef.current?.stopAsync();
-        setIsPlaying(false);
-      }
     } else if ('error' in status && status.error) {
-      console.log('MAB Feed: Video error:', status.error);
       setHasError(true);
     }
   }, []);
 
   return (
-    <View style={styles.feedItem}>
-      <Pressable style={styles.feedVideoContainer} onPress={onPress}>
-        {isActive && !hasError ? (
-          <Video
-            ref={videoRef}
-            source={{ uri: item.videoUrl }}
-            posterSource={{ uri: item.thumbnailUrl }}
-            usePoster
-            style={styles.feedVideo}
-            resizeMode={ResizeMode.COVER}
-            shouldPlay
-            isMuted={isMuted}
-            onPlaybackStatusUpdate={handleStatusUpdate}
-          />
-        ) : (
-          <Image
-            source={{ uri: item.thumbnailUrl }}
-            style={styles.feedVideo}
-            contentFit="cover"
-          />
-        )}
-
-        {(!isActive || (!isPlaying && !isBuffering)) && !hasError && (
-          <View style={styles.centerOverlay} pointerEvents="none">
-            <View style={styles.playCircle}>
-              <Play size={22} color="#FFF" fill="#FFF" />
-            </View>
-          </View>
-        )}
-
-        {isBuffering && isActive && (
-          <View style={styles.centerOverlay} pointerEvents="none">
-            <ActivityIndicator size="large" color="#4ADE80" />
-          </View>
-        )}
-
-        <View style={styles.titleOverlay} pointerEvents="none">
-          <Text style={styles.overlayAuthor}>{item.authorName}</Text>
-          <Text style={styles.overlayTitle} numberOfLines={1}>{item.title}</Text>
-        </View>
-
-        <View style={styles.topControls}>
-          {isActive && isPlaying && (
-            <Pressable style={styles.ctrlBtn} onPress={onToggleMute}>
-              {isMuted ? <VolumeX size={14} color="#FFF" /> : <Volume2 size={14} color="#FFF" />}
-            </Pressable>
-          )}
-          <Pressable style={styles.ctrlBtn} onPress={onFullscreen}>
-            <Maximize2 size={14} color="#FFF" />
+    <View style={fsStyles.container}>
+      {Platform.OS !== 'web' && <StatusBar hidden />}
+      {!hasError ? (
+        <Video
+          ref={videoRef}
+          source={{ uri: item.file_path }}
+          style={fsStyles.video}
+          resizeMode={ResizeMode.CONTAIN}
+          shouldPlay
+          useNativeControls
+          onPlaybackStatusUpdate={handleStatus}
+        />
+      ) : (
+        <View style={fsStyles.errorWrap}>
+          <AlertCircle size={40} color="#EF4444" />
+          <Text style={fsStyles.errorText}>Impossible de lire cette vidéo</Text>
+          <Pressable style={fsStyles.retryBtn} onPress={() => { setHasError(false); videoRef.current?.playAsync(); }}>
+            <RotateCcw size={16} color="#FFF" />
+            <Text style={fsStyles.retryText}>Réessayer</Text>
           </Pressable>
         </View>
+      )}
+      {isBuffering && !hasError && (
+        <View style={fsStyles.bufferingOverlay} pointerEvents="none">
+          <ActivityIndicator size="large" color="#4ADE80" />
+        </View>
+      )}
+      <Pressable style={[fsStyles.closeBtn, { top: insets.top + 12 }]} onPress={onClose}>
+        <X size={20} color="#FFF" />
       </Pressable>
     </View>
   );
-});
+}
 
-// ─── Screen ────────────────────────────────────────────────────────────────────
+interface FullscreenImageProps {
+  item: MediaItem;
+  onClose: () => void;
+}
 
-export default function VideosScreen() {
-  const { videoPublications, colors, t, textScale } = useApp();
+function FullscreenImage({ item, onClose }: FullscreenImageProps) {
   const insets = useSafeAreaInsets();
-  const [activeVideoId, setActiveVideoId] = useState<string | null>(null);
-  const [isMuted, setIsMuted] = useState(true);
-  const [fullscreenVisible, setFullscreenVisible] = useState(false);
-  const [fsActiveIndex, setFsActiveIndex] = useState(0);
-  const fsListRef = useRef<FlatList<VideoFeedItem>>(null);
-  const viewabilityConfigRef = useRef({ itemVisiblePercentThreshold: 60 });
+  return (
+    <View style={fsStyles.container}>
+      {Platform.OS !== 'web' && <StatusBar hidden />}
+      <Image
+        source={{ uri: item.file_path }}
+        style={fsStyles.video}
+        contentFit="contain"
+      />
+      <Pressable style={[fsStyles.closeBtn, { top: insets.top + 12 }]} onPress={onClose}>
+        <X size={20} color="#FFF" />
+      </Pressable>
+    </View>
+  );
+}
 
-  const feedItems: VideoFeedItem[] = useMemo(() => {
-    const demoItems: VideoFeedItem[] = DEMO_VIDEOS.map(v => ({
-      id: v.id,
-      title: v.title,
-      videoUrl: v.videoUrl,
-      thumbnailUrl: v.thumbnailUrl,
-      authorName: v.authorName,
-    }));
-    const communityItems: VideoFeedItem[] = videoPublications.map(p => ({
-      id: p.id,
-      title: p.authorName,
-      videoUrl: p.videoUrl!,
-      thumbnailUrl: p.imageUrl || 'https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?w=800&h=600&fit=crop',
-      authorName: p.authorName,
-    }));
-    return [...demoItems, ...communityItems];
-  }, [videoPublications]);
+export default function GalleryScreen() {
+  const { colors, textScale } = useApp();
+  const { items, isLoading, error, refresh } = useMediaFeed();
+  const [viewMode, setViewMode] = useState<ViewMode>('grid');
+  const [activeItem, setActiveItem] = useState<MediaItem | null>(null);
 
-  const handleVideoPress = useCallback((id: string) => {
-    setActiveVideoId(prev => (prev === id ? null : id));
+  const images = useMemo(() => items.filter(i => i.media_type === 'image'), [items]);
+  const videos = useMemo(() => items.filter(i => i.media_type === 'video'), [items]);
+  const [filter, setFilter] = useState<'all' | 'image' | 'video'>('all');
+
+  const displayed = useMemo(() => {
+    if (filter === 'image') return images;
+    if (filter === 'video') return videos;
+    return items;
+  }, [filter, items, images, videos]);
+
+  const handleOpen = useCallback((item: MediaItem) => {
+    setActiveItem(item);
   }, []);
 
-  const handleToggleMute = useCallback(() => {
-    setIsMuted(prev => !prev);
+  const handleClose = useCallback(() => {
+    setActiveItem(null);
   }, []);
 
-  const handleOpenFullscreen = useCallback((id: string) => {
-    const idx = feedItems.findIndex(item => item.id === id);
-    const startIdx = idx >= 0 ? idx : 0;
-    setFsActiveIndex(startIdx);
-    setFullscreenVisible(true);
-    setTimeout(() => {
-      fsListRef.current?.scrollToIndex({ index: startIdx, animated: false });
-    }, 100);
-  }, [feedItems]);
+  const renderGridItem = useCallback(({ item }: { item: MediaItem }) => (
+    <Pressable style={gridStyles.cell} onPress={() => handleOpen(item)}>
+      {item.media_type === 'image' ? (
+        <Image source={{ uri: item.file_path }} style={gridStyles.thumb} contentFit="cover" />
+      ) : (
+        <View style={[gridStyles.thumb, { backgroundColor: '#0D0D1A', justifyContent: 'center', alignItems: 'center' }]}>
+          <Play size={22} color="#FFF" fill="#FFF" />
+        </View>
+      )}
+      <View style={gridStyles.typeOverlay}>
+        {item.media_type === 'video'
+          ? <Film size={10} color="#FFF" />
+          : <ImageIcon size={10} color="#FFF" />}
+      </View>
+      <View style={[gridStyles.statusDot, {
+        backgroundColor: item.status === 'approved' ? '#4ADE80' : item.status === 'rejected' ? '#EF4444' : '#FBBF24',
+      }]} />
+    </Pressable>
+  ), [handleOpen]);
 
-  const handleCloseFullscreen = useCallback(() => {
-    setFullscreenVisible(false);
-  }, []);
-
-  const onFsViewableItemsChanged = useCallback(({ viewableItems }: { viewableItems: Array<{ index: number | null }> }) => {
-    if (viewableItems.length > 0) {
-      const idx = viewableItems[0].index ?? 0;
-      setFsActiveIndex(idx);
-      console.log('MAB FS: Active video index:', idx);
+  const renderListItem = useCallback(({ item }: { item: MediaItem }) => {
+    if (item.media_type === 'video') {
+      return <VideoCard item={item} onPress={() => handleOpen(item)} />;
     }
-  }, []);
+    return <ImageCard item={item} onPress={() => handleOpen(item)} />;
+  }, [handleOpen]);
 
-  const getItemLayout = useCallback((_: ArrayLike<VideoFeedItem> | null | undefined, index: number) => ({
-    length: SCREEN_HEIGHT,
-    offset: SCREEN_HEIGHT * index,
-    index,
-  }), []);
+  const keyExtractor = useCallback((item: MediaItem) => item.id, []);
 
-  const renderFeedItem = useCallback(({ item }: { item: VideoFeedItem }) => (
-    <FeedItem
-      item={item}
-      isActive={activeVideoId === item.id}
-      isMuted={isMuted}
-      onPress={() => handleVideoPress(item.id)}
-      onToggleMute={handleToggleMute}
-      onFullscreen={() => handleOpenFullscreen(item.id)}
-    />
-  ), [activeVideoId, isMuted, handleVideoPress, handleToggleMute, handleOpenFullscreen]);
+  const renderHeader = useCallback(() => (
+    <View style={[headerStyles.wrap, { backgroundColor: colors.background }]}>
+      <View style={headerStyles.titleRow}>
+        <Text style={[headerStyles.title, { color: colors.text, fontSize: 22 * textScale }]}>Médiathèque</Text>
+        <View style={headerStyles.controls}>
+          <Pressable
+            style={[headerStyles.modeBtn, viewMode === 'grid' && { backgroundColor: colors.primary + '30' }]}
+            onPress={() => setViewMode('grid')}
+          >
+            <Grid2x2 size={18} color={viewMode === 'grid' ? colors.primary : colors.textMuted} />
+          </Pressable>
+          <Pressable
+            style={[headerStyles.modeBtn, viewMode === 'list' && { backgroundColor: colors.primary + '30' }]}
+            onPress={() => setViewMode('list')}
+          >
+            <List size={18} color={viewMode === 'list' ? colors.primary : colors.textMuted} />
+          </Pressable>
+        </View>
+      </View>
 
-  const handleFsVideoFinished = useCallback(() => {
-    setFsActiveIndex(prev => {
-      const next = prev + 1;
-      if (next < feedItems.length) {
-        setTimeout(() => {
-          fsListRef.current?.scrollToIndex({ index: next, animated: true });
-        }, 50);
-        return next;
-      }
-      return prev;
-    });
-  }, [feedItems.length]);
+      <View style={headerStyles.stats}>
+        <View style={[headerStyles.statItem, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <Text style={[headerStyles.statNum, { color: colors.text }]}>{items.length}</Text>
+          <Text style={[headerStyles.statLabel, { color: colors.textMuted }]}>Total</Text>
+        </View>
+        <View style={[headerStyles.statItem, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <ImageIcon size={14} color="#38BDF8" />
+          <Text style={[headerStyles.statNum, { color: '#38BDF8' }]}>{images.length}</Text>
+          <Text style={[headerStyles.statLabel, { color: colors.textMuted }]}>Images</Text>
+        </View>
+        <View style={[headerStyles.statItem, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <Film size={14} color="#818CF8" />
+          <Text style={[headerStyles.statNum, { color: '#818CF8' }]}>{videos.length}</Text>
+          <Text style={[headerStyles.statLabel, { color: colors.textMuted }]}>Vidéos</Text>
+        </View>
+      </View>
 
-  const renderFullscreenItem = useCallback(({ item, index }: { item: VideoFeedItem; index: number }) => (
-    <FullscreenItem
-      item={item}
-      isActive={fsActiveIndex === index}
-      isMuted={isMuted}
-      onToggleMute={handleToggleMute}
-      onFinished={handleFsVideoFinished}
-    />
-  ), [fsActiveIndex, isMuted, handleToggleMute, handleFsVideoFinished]);
+      <View style={headerStyles.filters}>
+        {(['all', 'image', 'video'] as const).map(f => (
+          <Pressable
+            key={f}
+            style={[headerStyles.filterBtn, filter === f && { backgroundColor: colors.primary }]}
+            onPress={() => setFilter(f)}
+          >
+            <Text style={[headerStyles.filterText, { color: filter === f ? colors.background : colors.textSecondary }]}>
+              {f === 'all' ? 'Tout' : f === 'image' ? 'Images' : 'Vidéos'}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+    </View>
+  ), [colors, textScale, viewMode, filter, items.length, images.length, videos.length]);
 
-  const keyExtractor = useCallback((item: VideoFeedItem) => item.id, []);
+  if (isLoading && items.length === 0) {
+    return (
+      <View style={[styles.center, { backgroundColor: colors.background }]}>
+        <ActivityIndicator size="large" color={colors.primary} />
+        <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Chargement des médias…</Text>
+      </View>
+    );
+  }
 
-  if (feedItems.length === 0) {
+  if (error && items.length === 0) {
+    return (
+      <View style={[styles.center, { backgroundColor: colors.background }]}>
+        <AlertCircle size={44} color={colors.danger} />
+        <Text style={[styles.errorTitle, { color: colors.text }]}>Erreur de chargement</Text>
+        <Text style={[styles.errorMsg, { color: colors.textSecondary }]}>{error}</Text>
+        <Pressable style={[styles.reloadBtn, { backgroundColor: colors.primary }]} onPress={refresh}>
+          <RefreshCw size={16} color={colors.background} />
+          <Text style={[styles.reloadBtnText, { color: colors.background }]}>Réessayer</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  if (!isLoading && displayed.length === 0) {
     return (
       <View style={[styles.container, { backgroundColor: colors.background }]}>
-        <EmptyState
-          icon={<Film size={48} color={colors.primary} />}
-          title={t.noVideos}
-          message={t.noVideosMsg}
-        />
+        {renderHeader()}
+        <View style={styles.center}>
+          {filter === 'video'
+            ? <Film size={48} color={colors.textMuted} />
+            : <ImageIcon size={48} color={colors.textMuted} />}
+          <Text style={[styles.emptyTitle, { color: colors.text }]}>Aucun média</Text>
+          <Text style={[styles.emptyMsg, { color: colors.textSecondary }]}>
+            Les médias uploadés par les utilisateurs apparaîtront ici.
+          </Text>
+          <Pressable style={[styles.reloadBtn, { borderColor: colors.border, backgroundColor: colors.surface }]} onPress={refresh}>
+            <RefreshCw size={16} color={colors.textSecondary} />
+            <Text style={[styles.reloadBtnText, { color: colors.textSecondary }]}>Actualiser</Text>
+          </Pressable>
+        </View>
       </View>
     );
   }
 
   return (
-    <View style={[styles.container, { backgroundColor: '#000' }]}>
-      <View style={[styles.header, { paddingTop: 12 }]}>
-        <Text style={[styles.headerTitle, { color: colors.text, fontSize: 20 * textScale }]}>
-          {t.inspiringVideos}
-        </Text>
-      </View>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
+      {viewMode === 'grid' ? (
+        <FlatList
+          data={displayed}
+          renderItem={renderGridItem}
+          keyExtractor={keyExtractor}
+          numColumns={GRID_COLS}
+          ListHeaderComponent={renderHeader}
+          showsVerticalScrollIndicator={false}
+          removeClippedSubviews={Platform.OS !== 'web'}
+          refreshControl={
+            <RefreshControl
+              refreshing={isLoading}
+              onRefresh={refresh}
+              tintColor={colors.primary}
+              colors={[colors.primary]}
+            />
+          }
+          testID="gallery-grid"
+        />
+      ) : (
+        <FlatList
+          data={displayed}
+          renderItem={renderListItem}
+          keyExtractor={keyExtractor}
+          ListHeaderComponent={renderHeader}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.listPadding}
+          removeClippedSubviews={Platform.OS !== 'web'}
+          refreshControl={
+            <RefreshControl
+              refreshing={isLoading}
+              onRefresh={refresh}
+              tintColor={colors.primary}
+              colors={[colors.primary]}
+            />
+          }
+          testID="gallery-list"
+        />
+      )}
 
-      <FlatList
-        data={feedItems}
-        renderItem={renderFeedItem}
-        keyExtractor={keyExtractor}
-        showsVerticalScrollIndicator={false}
-        removeClippedSubviews={Platform.OS !== 'web'}
-        testID="videos-feed"
-      />
-
-      {/* Fullscreen Modal */}
       <Modal
-        visible={fullscreenVisible}
+        visible={!!activeItem && activeItem.media_type === 'video'}
         animationType="fade"
         statusBarTranslucent
-        onRequestClose={handleCloseFullscreen}
+        onRequestClose={handleClose}
       >
-        <View style={fsStyles.modal}>
-          {Platform.OS !== 'web' && <StatusBar hidden />}
+        {activeItem && activeItem.media_type === 'video' && (
+          <FullscreenVideo item={activeItem} onClose={handleClose} />
+        )}
+      </Modal>
 
-          <FlatList
-            ref={fsListRef}
-            data={feedItems}
-            renderItem={renderFullscreenItem}
-            keyExtractor={keyExtractor}
-            pagingEnabled
-            snapToAlignment="start"
-            snapToInterval={SCREEN_HEIGHT}
-            decelerationRate="fast"
-            showsVerticalScrollIndicator={false}
-            onViewableItemsChanged={onFsViewableItemsChanged}
-            viewabilityConfig={viewabilityConfigRef.current}
-            getItemLayout={getItemLayout}
-            removeClippedSubviews={Platform.OS !== 'web'}
-            initialScrollIndex={fsActiveIndex}
-            testID="fullscreen-feed"
-          />
-
-          {/* Close button */}
-          <Pressable
-            style={[fsStyles.closeBtn, { top: insets.top + 12 }]}
-            onPress={handleCloseFullscreen}
-          >
-            <X size={20} color="#FFF" />
-          </Pressable>
-
-          {/* Index indicator */}
-          <View style={[fsStyles.indexBadge, { bottom: insets.bottom + 90 }]} pointerEvents="none">
-            <Text style={fsStyles.indexText}>{fsActiveIndex + 1} / {feedItems.length}</Text>
-          </View>
-        </View>
+      <Modal
+        visible={!!activeItem && activeItem.media_type === 'image'}
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={handleClose}
+      >
+        {activeItem && activeItem.media_type === 'image' && (
+          <FullscreenImage item={activeItem} onClose={handleClose} />
+        )}
       </Modal>
     </View>
   );
 }
 
-// ─── Feed styles ───────────────────────────────────────────────────────────────
-
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  header: {
-    paddingHorizontal: 18,
-    paddingBottom: 10,
-  },
-  headerTitle: {
-    fontWeight: '700' as const,
-    letterSpacing: 0.3,
-  },
-  feedItem: {
-    width: SCREEN_WIDTH,
-    height: FEED_VIDEO_HEIGHT,
-  },
-  feedVideoContainer: {
-    flex: 1,
-    backgroundColor: '#000',
-  },
-  feedVideo: {
-    width: '100%',
-    height: '100%',
-  },
-  centerOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  playCircle: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingLeft: 3,
-    borderWidth: 1.5,
-    borderColor: 'rgba(255,255,255,0.3)',
-  },
-  titleOverlay: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 50,
-    paddingHorizontal: 14,
-    paddingTop: 40,
-    paddingBottom: 14,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-  },
-  overlayAuthor: {
-    fontSize: 13,
-    fontWeight: '700' as const,
-    color: '#FFFFFF',
-    marginBottom: 2,
-  },
-  overlayTitle: {
-    fontSize: 12,
-    color: 'rgba(255,255,255,0.8)',
-  },
-  topControls: {
-    position: 'absolute',
-    top: 12,
-    right: 12,
-    gap: 8,
-    alignItems: 'center',
-  },
-  ctrlBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.15)',
-  },
-});
-
-// ─── Fullscreen styles ─────────────────────────────────────────────────────────
-
-const fsStyles = StyleSheet.create({
-  modal: {
-    flex: 1,
-    backgroundColor: '#000',
-  },
-  item: {
-    width: SCREEN_WIDTH,
-    height: SCREEN_HEIGHT,
-    backgroundColor: '#000',
-  },
-  video: {
-    width: '100%',
-    height: '100%',
-  },
-  centerOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  pauseCircle: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.25)',
-  },
-  retryBtn: {
+  container: { flex: 1 },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12, padding: 32 },
+  loadingText: { fontSize: 15, marginTop: 8 },
+  errorTitle: { fontSize: 18, fontWeight: '700' as const, marginTop: 8 },
+  errorMsg: { fontSize: 13, textAlign: 'center', lineHeight: 18 },
+  emptyTitle: { fontSize: 18, fontWeight: '700' as const, marginTop: 8 },
+  emptyMsg: { fontSize: 13, textAlign: 'center', lineHeight: 18 },
+  reloadBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: 'rgba(74,222,128,0.3)',
     paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginTop: 8,
+  },
+  reloadBtnText: { fontSize: 14, fontWeight: '600' as const },
+  listPadding: { paddingHorizontal: 14, paddingBottom: 32 },
+});
+
+const headerStyles = StyleSheet.create({
+  wrap: { paddingTop: 16, paddingHorizontal: 16, paddingBottom: 12, gap: 14 },
+  titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  title: { fontWeight: '800' as const, letterSpacing: 0.2 },
+  controls: { flexDirection: 'row', gap: 6 },
+  modeBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  stats: { flexDirection: 'row', gap: 10 },
+  statItem: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
     paddingVertical: 10,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#4ADE80',
   },
-  retryText: {
-    color: '#FFF',
-    fontSize: 14,
-    fontWeight: '600' as const,
+  statNum: { fontSize: 16, fontWeight: '700' as const },
+  statLabel: { fontSize: 11 },
+  filters: { flexDirection: 'row', gap: 8 },
+  filterBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 7,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.06)',
   },
-  bottomInfo: {
+  filterText: { fontSize: 13, fontWeight: '600' as const },
+});
+
+const gridStyles = StyleSheet.create({
+  cell: {
+    width: GRID_ITEM_SIZE,
+    height: GRID_ITEM_SIZE,
+    margin: 0.5,
+    position: 'relative',
+    backgroundColor: '#111',
+  },
+  thumb: {
+    width: '100%',
+    height: '100%',
+  },
+  typeOverlay: {
     position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 60,
-    paddingHorizontal: 18,
-    paddingTop: 60,
-    paddingBottom: 100,
-    backgroundColor: 'rgba(0,0,0,0.35)',
+    bottom: 5,
+    left: 5,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    borderRadius: 5,
+    padding: 3,
   },
-  fsAuthor: {
-    fontSize: 16,
-    fontWeight: '700' as const,
-    color: '#FFFFFF',
-    marginBottom: 4,
-  },
-  fsTitle: {
-    fontSize: 14,
-    color: 'rgba(255,255,255,0.85)',
-    lineHeight: 20,
-  },
-  muteBtn: {
+  statusDot: {
     position: 'absolute',
-    bottom: 108,
-    right: 16,
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    top: 5,
+    right: 5,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.4)',
+  },
+});
+
+const listStyles = StyleSheet.create({
+  card: {
+    marginBottom: 14,
+    borderRadius: 14,
+    overflow: 'hidden',
+    backgroundColor: '#111',
+  },
+  cardImage: {
+    width: '100%',
+    height: 200,
+  },
+  videoThumb: {
+    width: '100%',
+    height: 180,
+    backgroundColor: '#0D0D1A',
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
+  },
+  videoIconBg: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingLeft: 4,
+  },
+  videoBadge: {
+    position: 'absolute',
+    bottom: 10,
+    left: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  videoBadgeText: { color: '#FFF', fontSize: 11 },
+  meta: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: '#161616',
+  },
+  metaLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  metaDate: { color: '#6B7280', fontSize: 12 },
+  statusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  statusDot: { width: 6, height: 6, borderRadius: 3 },
+  statusText: { fontSize: 11, fontWeight: '600' as const },
+  typePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  typeText: { fontSize: 11, fontWeight: '600' as const },
+});
+
+const fsStyles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#000',
+    justifyContent: 'center',
+  },
+  video: {
+    width: SCREEN_WIDTH,
+    height: SCREEN_HEIGHT,
+  },
+  bufferingOverlay: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0, bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   closeBtn: {
     position: 'absolute',
@@ -600,16 +567,24 @@ const fsStyles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.2)',
   },
-  indexBadge: {
-    position: 'absolute',
-    alignSelf: 'center',
-    left: 0,
-    right: 0,
+  errorWrap: {
+    flex: 1,
+    justifyContent: 'center',
     alignItems: 'center',
+    gap: 14,
+    padding: 32,
   },
-  indexText: {
-    color: 'rgba(255,255,255,0.5)',
-    fontSize: 12,
-    fontWeight: '600' as const,
+  errorText: { color: '#9CA3AF', fontSize: 15, textAlign: 'center' },
+  retryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.15)',
   },
+  retryText: { color: '#FFF', fontSize: 14, fontWeight: '600' as const },
 });
