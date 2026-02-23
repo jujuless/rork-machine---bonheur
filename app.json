@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "Machine à Bonheur",
-    "slug": "machine-a-bonheur",
+    "name": "Seranova",
+    "slug": "seranova",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -15,14 +15,14 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "app.rork.machine-a-bonheur"
+      "bundleIdentifier": "app.rork.Seranova"
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "package": "app.rork.machine_a_bonheur"
+      "package": "app.rork.seranova"
     },
     "web": {
       "favicon": "./assets/images/favicon.png"
